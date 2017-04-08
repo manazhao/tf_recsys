@@ -2,6 +2,7 @@ from common import app_init
 
 import argparse
 import feature
+import logging
 import tensorflow as tf
 import unittest
 
@@ -21,21 +22,15 @@ class TestFeature(unittest.TestCase):
     			"str_val" : feature.string_feature(str_val),
     			"str_list" : feature.string_list_feature(str_list)
     		})
-    	serialized_example = example.SerializeToString()
-    	parsed_features = tf.parse_single_example(
-    		serialized_example,
-    		features = {
-    			"int_val" : tf.FixedLenFeature([], tf.int64),
-    			"int_list" : tf.FixedLenFeature([], tf.int64),
-    			"float_val" : tf.FixedLenFeature([], tf.float32),
-    			"float_list" : tf.FixedLenFeature([], tf.float32),
-    			"str_val" : tf.VarLenFeature(tf.string),
-    			"str_list" : tf.VarLenFeature(tf.string)
-    		}
-    	)
-    	self.assertEqual(tf.cast(parsed_features["int_val"], tf.int64), int_val)
-    	print(example_parsed)
-
+    	example_str = example.SerializeToString()
+    	parsed_example = tf.train.Example()
+    	parsed_example.ParseFromString(example_str)
+    	self.assertEqual(feature.get_int64_feature(parsed_example,'int_val'), 0)
+    	self.assertListEqual(feature.get_int64_list_feature(parsed_example, 'int_list'), int_list)
+    	self.assertAlmostEqual(round(feature.get_float_feature(parsed_example,'float_val'),2), float_val)
+    	self.assertListEqual([round(v,2) for v in feature.get_float_list_feature(parsed_example,'float_list')], float_list)
+    	self.assertEqual(feature.get_string_feature(parsed_example,'str_val'), str_val)
+    	self.assertListEqual(feature.get_string_list_feature(parsed_example,'str_list'), str_list)
 
 if __name__ == '__main__':
     prog_name, unparsed = app_init()
