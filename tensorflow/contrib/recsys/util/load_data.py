@@ -31,4 +31,3 @@ def convert_to_tf_records(rating_file, tf_record_file):
 					"rating" : helper.float_feature(rating)
 				})
 			writer.write(example.SerializeToString())
-

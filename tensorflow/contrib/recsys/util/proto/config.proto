@@ -1,0 +1,12 @@
+syntax="proto3";
+
+package recsys.util;
+
+message FeatureInputConfig {
+	int64 batch_size = 1;
+	int64 capacity = 2;
+	int64 num_threads = 3;
+	int64 min_after_dequeue = 4;
+	int64 num_epochs = 5;
+	int64 num_batches = 6;
+}

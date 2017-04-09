@@ -1,4 +1,5 @@
 import tensorflow as tf
+import tensorflow.contrib.recsys.util.proto.config_pb2 as config
 
 def int64_feature(val):
     return tf.train.Feature(int64_list = tf.train.Int64List(value=[val]))
@@ -53,3 +54,53 @@ def get_string_feature(example, feature_name):
 
 def get_string_list_feature(example, feature_name):
 	return [s.decode('utf-8') for s in example.features.feature[feature_name].bytes_list.value]
+
+
+# Reads batched features and labels from given files, and consumes them through
+# callback function "consum_batch_fn".
+# x_feature_spec: dictionary specifying the type of each input feature.
+# y_feature_spec: dictionary specifying the type of the label.
+# input_config: settings for generating batched features and labels.
+# consume_batch_fn: callback function that defines the consumption of the 
+# batched features and labels.
+def fetch_and_process_features(filenames, x_feature_spec, y_feature_spec, input_config, consume_batch_fn):
+	# Reads examples from the filenames and parse them into features.
+	def _read_and_decode(filename_queue, x_feature_spec, y_feature_spec, batch_size = 2, capacity = 30, num_threads = 2, min_after_dequeue = 10):
+		reader = tf.TFRecordReader()
+		_, serialized_example = reader.read(filename_queue)
+		features = tf.parse_single_example(
+			serialized_example, features = x_feature_spec)
+		labels = tf.parse_single_example(
+			serialized_example, features = y_feature_spec
+			)
+		batched_features, batched_labels = tf.train.shuffle_batch([features, labels],
+			batch_size = batch_size,
+			capacity = capacity,
+			num_threads = num_threads,
+			min_after_dequeue = min_after_dequeue)
+		return batched_features, batched_labels
+
+	filename_queue = tf.train.string_input_producer(
+		filenames, num_epochs = input_config.num_epochs)
+	features, labels = _read_and_decode(
+		filename_queue,
+		x_feature_spec,
+		y_feature_spec,
+		batch_size = input_config.batch_size,
+		capacity = input_config.capacity,
+		num_threads = input_config.num_threads,
+		min_after_dequeue = input_config.min_after_dequeue
+		)
+	init_op = tf.group(tf.global_variables_initializer(),
+                   tf.local_variables_initializer())
+	with tf.Session()  as sess:
+	    sess.run(init_op)
+	    coord = tf.train.Coordinator()
+	    threads = tf.train.start_queue_runners(coord=coord)
+	    for i in xrange(input_config.num_batches):
+	    	batched_features, batched_labels = sess.run(features, labels)
+	    	logging.info('current batch{}'.format(i))
+	    	logging.info(batched_features)
+	    	logging.info(batched_labels)
+	    coord.request_stop()
+	    coord.join(threads)

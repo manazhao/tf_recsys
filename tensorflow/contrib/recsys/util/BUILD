@@ -9,7 +9,8 @@ py_library(
 	srcs = ["feature_helper.py"],
 	srcs_version = "PY2AND3",
 	deps = [
-		"//tensorflow:tensorflow_py"
+		"//tensorflow:tensorflow_py",
+		"//tensorflow/contrib/recsys/util/proto:config_proto_py",
 		]
 )
 
@@ -19,7 +20,7 @@ py_library(
 	srcs_version = "PY2AND3",
 	deps = [
 		":feature_helper",
-		"//tensorflow:tensorflow_py"
+		"//tensorflow:tensorflow_py",
 	]
 )
 
@@ -30,7 +31,8 @@ py_test(
 	size = "small",
 	deps = [
 		":common",
-		":feature_helper"
+		":feature_helper",
+		"//tensorflow/contrib/recsys/util/proto:config_proto_py",
 	],
 	args = [
 		"--log_level=INFO"
