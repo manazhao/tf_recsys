@@ -1,4 +1,4 @@
-import feature_helper as helper
+import recsys.util.feature_helper as helper
 import logging
 import pandas as pd
 import re

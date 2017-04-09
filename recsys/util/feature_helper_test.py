@@ -5,7 +5,7 @@ import feature_helper as fh
 import logging
 import os
 import tensorflow as tf
-import tensorflow.contrib.recsys.util.proto.config_pb2 as config
+import recsys.util.proto.config_pb2 as config
 import unittest
 
 
@@ -50,17 +50,20 @@ class TestFeature(unittest.TestCase):
             writer.write(example1.SerializeToString())
             writer.write(example2.SerializeToString())
         input_config = config.FeatureInputConfig()
-        input_config.batch_size = 1
-        input_config.num_batches = 2
+        input_config.batch_size = 2
+        input_config.num_batches = 1
         input_config.capacity = 1
         input_config.num_epochs = 1
         input_config.num_threads = 1
         input_config.min_after_dequeue = 0
 
-        def _consume_batched_features(features):
-            # logging.info(features)
-            # logging.info(labels)
-            logging.info('handling features and labels')
+        def _consume_batched_features(sess, features):
+            logging.info('handling features')
+            results = sess.run(features)
+            self.assertEqual(results['x'][0], 1)
+            self.assertEqual(results['x'][1], 2)
+            self.assertAlmostEqual(results['y'][0], 3)
+            self.assertAlmostEqual(results['y'][1], 4)
 
         feature_spec = {
             'x' : tf.FixedLenFeature([],tf.int64),

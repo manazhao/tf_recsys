@@ -1,6 +1,6 @@
 import logging
 import tensorflow as tf
-import tensorflow.contrib.recsys.util.proto.config_pb2 as config
+import recsys.util.proto.config_pb2 as config
 
 def int64_feature(val):
     return tf.train.Feature(int64_list = tf.train.Int64List(value=[val]))
@@ -94,8 +94,7 @@ def fetch_and_process_features(filenames, feature_spec, input_config, consume_ba
 	    coord = tf.train.Coordinator()
 	    threads = tf.train.start_queue_runners(coord=coord)
 	    for i in range(input_config.num_batches):
-	    	logging.info('current batch{}'.format(i))
-	    	sess.run(features)
-	    	consume_batch_fn(features)
+	    	logging.info('current batch:{}'.format(i))
+	    	consume_batch_fn(sess, features)
 	    coord.request_stop()
 	    coord.join(threads)

@@ -5,5 +5,5 @@ tf_proto_library(
 	srcs = [
 		"config.proto",
 	],
-	visibility = ["//tensorflow/contrib/recsys:__subpackages__"]
+	visibility = ["//recsys:__subpackages__"]
 )

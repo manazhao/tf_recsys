@@ -1,6 +1,6 @@
 syntax="proto3";
 
-package recsys.util;
+package recsys;
 
 message FeatureInputConfig {
 	int64 batch_size = 1;
