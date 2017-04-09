@@ -55,19 +55,22 @@ class TestFeature(unittest.TestCase):
         input_config.capacity = 1
         input_config.num_epochs = 1
         input_config.num_threads = 1
-        input_config.min_after_dequeue = 1
+        input_config.min_after_dequeue = 0
 
-        def _consume_batched_features(features, labels):
+        def _consume_batched_features(features):
             # logging.info(features)
             # logging.info(labels)
             logging.info('handling features and labels')
 
+        feature_spec = {
+            'x' : tf.FixedLenFeature([],tf.int64),
+            'y' : tf.FixedLenFeature([], tf.float32)
+        }
         fh.fetch_and_process_features([tf_records_file],
-                x_feature_spec = {'x' : tf.FixedLenFeature([],tf.int64)},
-                y_feature_spec = {'y' : tf.FixedLenFeature([], tf.float32)},
+                feature_spec = feature_spec,
                 input_config = input_config,
                 consume_batch_fn = _consume_batched_features
-            )
+        )
 
 if __name__ == '__main__':
     prog_name, unparsed = app_init()
