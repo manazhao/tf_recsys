@@ -9,6 +9,15 @@ py_library(
 )
 
 py_library(
+	name = "dataset_helper",
+	srcs = ["dataset_helper.py"],
+	srcs_version = "PY2AND3",
+	deps = [
+		"//tensorflow:tensorflow_py",
+	]
+)
+
+py_library(
 	name = "feature_helper",
 	srcs = ["feature_helper.py"],
 	srcs_version = "PY2AND3",
@@ -16,6 +25,20 @@ py_library(
 		"//tensorflow:tensorflow_py",
 		"//recsys/util/proto:config_proto_py",
 		]
+)
+
+py_test(
+	name = "dataset_helper_test",
+	srcs = ["dataset_helper_test.py"],
+	srcs_version = "PY2AND3",
+	deps = [
+		":common",
+		":dataset_helper",
+		":feature_helper",
+	],
+	args = [
+		"--log_level=INFO"
+	]
 )
 
 py_test(

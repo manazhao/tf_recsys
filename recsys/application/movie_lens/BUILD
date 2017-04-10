@@ -1,3 +1,13 @@
+py_binary(
+	name = "main",
+	srcs = ["main.py"],
+	srcs_version = "PY2AND3",
+	deps = [
+		":movie_lens_data",
+		"//recsys/util:common"
+	]
+)
+
 py_library(
 	name = "movie_lens_data",
 	srcs = ["movie_lens_data.py"],
