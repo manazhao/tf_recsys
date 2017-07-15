@@ -10,8 +10,8 @@ def number_of_tf_records(tf_record_file):
 def generate_cv_partitions(train_file, cv_fold = 5):
 	cv_files = ['{}-cv-{:03d}-{:03d}'.format(train_file, i, cv_fold) for i in range(cv_fold)]
 	writers = [tf.python_io.TFRecordWriter(cv_files[i]) for i in range(cv_fold)]
-	for s_example in tf.python_io.tf_record_iterator(file_name):
-		writers[randm.randint(0, cv_fold - 1)].write(s_example)
+	for s_example in tf.python_io.tf_record_iterator(train_file):
+		writers[random.randint(0, cv_fold - 1)].write(s_example)
 	for writer in writers:
 		writer.close()
 	return cv_files

@@ -1,0 +1,26 @@
+syntax="proto3";
+
+package tts;
+
+message CommonConfig {
+	float dropout = 1;
+	float learning_rate = 2;
+	string weight_column_name = 3;
+	int64 num_classes = 4;
+};
+
+message DNNClassifierConfig {
+	CommonConfig common = 1;
+	repeated int64 hidden_units = 2;
+};
+
+message EstimatorConfig {
+	enum EstimatorType {
+		ESTIMATOR_TYPE_UNKNOWN = 0;
+		ESTIMATOR_TYPE_DNN_CLASSIFIER = 1;
+	};
+	EstimatorType estimator_type = 1;
+	oneof config {
+		DNNClassifierConfig dnn_classifier_config = 2;
+	}
+}

@@ -1,0 +1,11 @@
+estimator_type: ESTIMATOR_TYPE_DNN_CLASSIFIER
+dnn_classifier_config: {
+	common: {
+		dropout: 0
+		learning_rate: 0.1
+		weight_column_name: ""
+		num_classes:2
+	}
+	hidden_units: 2
+	hidden_units: 2
+}
