@@ -1,5 +1,5 @@
 package(
-	default_visibility = ["//tts:__subpackages__"]
+	default_visibility = ["//ml:__subpackages__"]
 )
 
 py_library(

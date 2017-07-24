@@ -1,0 +1,48 @@
+name: "test feature column schema"
+basic_features: {
+	name: "int_fixed"
+	int_fixed: {
+		dimension: 10
+	}
+	retain: true
+}
+basic_features: {
+	name: "label"
+	int_fixed: {
+		dimension: 1
+	}
+	retain: true
+}
+basic_features: {
+	name: "float_fixed"
+	float_fixed: {
+		dimension: 20
+	}
+	retain: true
+}
+# this feature column will be discarded.
+basic_features: {
+	name: "float_fixed_discarded"
+	float_fixed: {
+		dimension: 20
+	}
+	retain: false
+}
+basic_features: {
+	name: "integerized_sparse"
+	integerized_sparse: {
+		bucket_size: 10
+		combiner: COMBINER_TYPE_SUM
+		data_type: DATA_TYPE_INT32
+	}
+	retain: true
+}
+basic_features: {
+	name: "hash_bucket_sparse"
+	hash_bucket_sparse: {
+		hash_bucket_size: 5000
+		combiner: COMBINER_TYPE_MEAN
+		data_type: DATA_TYPE_INT64
+	}
+	retain: true
+}

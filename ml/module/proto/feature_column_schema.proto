@@ -1,0 +1,114 @@
+syntax="proto3";
+
+package ml;
+
+message Bucket {
+	float upper_boundary = 1;
+	int64 sample_count = 2;
+}
+
+message Histogram {
+	repeated Bucket buckets = 1;
+}
+
+message NumericStats {
+	float min = 1;
+	float max = 2;
+	float mean = 3;
+	float std = 4;
+	Histogram histogram = 5;
+}
+
+message IntFixedLenColumn {
+	int64 dimension = 2;
+	NumericStats stats = 3;
+}
+
+message IntVarLenColumn {}
+
+message FloatFixedLenColumn {
+	int64 dimension = 2;
+	NumericStats stats = 3;
+}
+
+message FloatVarLenColumn {}
+
+enum CombinerType {
+	COMBINER_TYPE_UNKNOWN = 0;
+	COMBINER_TYPE_MEAN = 1;
+	COMBINER_TYPE_SQRT = 2;
+	COMBINER_TYPE_SUM = 3;
+}
+
+enum DataType {
+	DATA_TYPE_UNKNOWN = 0;
+	DATA_TYPE_INT32 = 1;
+	DATA_TYPE_INT64 = 2;
+	DATA_TYPE_FLOAT32 = 3;
+	DATA_TYPE_FLOAT64 = 4;
+}
+
+message IntegerizedSparseColumn {
+	int64 bucket_size = 2;
+	CombinerType combiner = 3;
+	DataType data_type = 4;
+}
+
+message HashBucketSparseColumn {
+	int64 hash_bucket_size = 2;
+	CombinerType combiner = 3;
+	DataType data_type = 4;
+}
+
+// Basic feature columns do not depend on other columns.
+message BasicFeatureColumn {
+	string name = 1;
+	oneof column {
+		IntFixedLenColumn int_fixed = 2;
+		IntVarLenColumn int_var = 3;
+		FloatFixedLenColumn float_fixed = 4;
+		FloatVarLenColumn float_var = 5;
+		IntegerizedSparseColumn integerized_sparse = 6;
+		HashBucketSparseColumn hash_bucket_sparse = 7;
+	}
+	// Whether the feature column will be retained. When a derived feature column
+	// created on top of basic feature column, the basic feature column can be
+	// discarded.
+	bool retain = 8;
+}
+
+// Converts real valued features to integer features.
+// The bucketizing boundaries are found in the stats
+// of the source column.
+message BucketizedColumn {}
+
+message OneHotColumn {}
+
+message EmbeddingColumn {
+	int64 dimension = 2;
+	CombinerType combiner = 3;
+}
+
+message SharedEmbeddingColumn {
+	int64 dimension = 1;
+	CombinerType combiner = 3;
+}
+
+// Derived feature columns sit on basic feature columns.
+message DerivedFeatureColumn {
+	string name = 1;
+	oneof column {
+		BucketizedColumn bucketized = 2;
+		OneHotColumn one_hot = 3;
+		EmbeddingColumn embedding = 4;
+		SharedEmbeddingColumn shared_embedding = 5;
+	}
+	repeated string dependent_name = 6;
+	bool retain = 7;
+}
+
+message FeatureColumnSchema {
+	string name = 1;
+	repeated BasicFeatureColumn basic_features = 2;
+	repeated DerivedFeatureColumn derived_features = 3;
+}

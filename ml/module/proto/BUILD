@@ -5,5 +5,13 @@ tf_proto_library(
 	srcs = [
 		"estimator_config.proto",
 	],
-	visibility = ["//tts:__subpackages__"]
+	visibility = ["//ml:__subpackages__"]
+)
+
+tf_proto_library(
+	name = "feature_column_schema",
+	srcs = [
+		"feature_column_schema.proto",
+	],
+	visibility = ["//ml:__subpackages__"]
 )

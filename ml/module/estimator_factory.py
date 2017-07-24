@@ -5,7 +5,7 @@ from __future__ import unicode_literals
 
 from google.protobuf import text_format
 import tensorflow as tf
-import tts.module.proto.estimator_config_pb2 as est_pb2
+import ml.module.proto.estimator_config_pb2 as est_pb2
 
 
 def estimator_config_from_file(config_file):

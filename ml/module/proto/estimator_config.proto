@@ -1,6 +1,6 @@
 syntax="proto3";
 
-package tts;
+package ml;
 
 message CommonConfig {
 	float dropout = 1;
