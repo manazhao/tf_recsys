@@ -103,12 +103,13 @@ message DerivedFeatureColumn {
 		EmbeddingColumn embedding = 4;
 		SharedEmbeddingColumn shared_embedding = 5;
 	}
-	repeated string dependent_name = 6;
+	// Names of the columns this feature column depends on.
+	repeated string depending_columns = 6;
 	bool retain = 7;
 }
 
 message FeatureColumnSchema {
 	string name = 1;
-	repeated BasicFeatureColumn basic_features = 2;
-	repeated DerivedFeatureColumn derived_features = 3;
+	repeated BasicFeatureColumn basic_columns = 2;
+	repeated DerivedFeatureColumn derived_columns = 3;
 }

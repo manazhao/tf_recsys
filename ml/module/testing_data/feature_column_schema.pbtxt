@@ -1,19 +1,19 @@
 name: "test feature column schema"
-basic_features: {
+basic_columns: {
 	name: "int_fixed"
 	int_fixed: {
 		dimension: 10
 	}
 	retain: true
 }
-basic_features: {
+basic_columns: {
 	name: "label"
 	int_fixed: {
 		dimension: 1
 	}
 	retain: true
 }
-basic_features: {
+basic_columns: {
 	name: "float_fixed"
 	float_fixed: {
 		dimension: 20
@@ -21,14 +21,14 @@ basic_features: {
 	retain: true
 }
 # this feature column will be discarded.
-basic_features: {
+basic_columns: {
 	name: "float_fixed_discarded"
 	float_fixed: {
 		dimension: 20
 	}
 	retain: false
 }
-basic_features: {
+basic_columns: {
 	name: "integerized_sparse"
 	integerized_sparse: {
 		bucket_size: 10
@@ -37,12 +37,21 @@ basic_features: {
 	}
 	retain: true
 }
-basic_features: {
+basic_columns: {
 	name: "hash_bucket_sparse"
 	hash_bucket_sparse: {
 		hash_bucket_size: 5000
 		combiner: COMBINER_TYPE_MEAN
 		data_type: DATA_TYPE_INT64
 	}
+	retain: true
+}
+derived_columns: {
+	name: "embedding"
+	embedding: {
+		dimension: 50
+		combiner: COMBINER_TYPE_SQRT
+	}
+	depending_columns: "hash_bucket_sparse"
 	retain: true
 }

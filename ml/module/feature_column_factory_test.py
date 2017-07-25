@@ -28,18 +28,21 @@ class FeatureColumnFactoryTest(tf.test.TestCase):
         "integerized_sparse", bucket_size=10, combiner="sum", dtype=tf.int32)
     self.hash_bucket_sparse = tf.contrib.layers.sparse_column_with_hash_bucket(
         "hash_bucket_sparse", hash_bucket_size=5000, combiner="mean", dtype=tf.int64)
+    self.embedding = tf.contrib.layers.embedding_column(
+        sparse_id_column=self.hash_bucket_sparse, dimension=50, combiner="sqrt")
 
   def testNotIncludeTarget(self):
     self.feature_columns = fcf.feature_columns_from_file(
         self.schema_pbtxt, include_target=False)
     self.assertItemsEqual(self.feature_columns, set(
-        [self.int_fixed, self.float_fixed, self.integerized_sparse, self.hash_bucket_sparse]))
+        [self.int_fixed, self.float_fixed, self.integerized_sparse, self.hash_bucket_sparse, self.embedding]))
 
   def testIncludeTarget(self):
     self.feature_columns = fcf.feature_columns_from_file(
         self.schema_pbtxt, include_target=True)
+    self.maxDiff = None
     self.assertItemsEqual(self.feature_columns, set(
-        [self.int_fixed, self.label, self.float_fixed, self.integerized_sparse, self.hash_bucket_sparse]))
+        [self.int_fixed, self.label, self.float_fixed, self.integerized_sparse, self.hash_bucket_sparse, self.embedding]))
 
 if __name__ == "__main__":
   tf.logging.set_verbosity(tf.logging.INFO)
