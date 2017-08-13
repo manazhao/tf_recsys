@@ -39,6 +39,7 @@ from tensorflow.python.saved_model import loader
 from tensorflow.python.saved_model import main_op
 from tensorflow.python.saved_model import signature_def_utils
 from tensorflow.python.saved_model import tag_constants
+from tensorflow.python.training import saver_test_utils
 from tensorflow.python.util import compat
 
 SAVED_MODEL_PATH = ("cc/saved_model/testdata/half_plus_two/00000123")
@@ -116,6 +117,61 @@ class SavedModelTest(test.TestCase):
     base_path = "complete_garbage"
     self.assertFalse(loader.maybe_saved_model_directory(base_path))
 
+  def testBadSavedModelFileFormat(self):
+    export_dir = os.path.join(test.get_temp_dir(),
+                              "test_bad_saved_model_file_format")
+    # Attempt to load a SavedModel from an export directory that does not exist.
+    with self.test_session(graph=ops.Graph()) as sess:
+      with self.assertRaisesRegexp(IOError,
+                                   "SavedModel file does not exist at: %s" %
+                                   export_dir):
+        loader.load(sess, ["foo"], export_dir)
+
+    os.makedirs(export_dir)
+    # Write an invalid binary proto to saved_model.pb.
+    path_to_pb = os.path.join(export_dir, constants.SAVED_MODEL_FILENAME_PB)
+    with open(path_to_pb, "w") as f:
+      f.write("invalid content")
+    with self.test_session(graph=ops.Graph()) as sess:
+      with self.assertRaisesRegexp(IOError, "Cannot parse file.*%s" %
+                                   constants.SAVED_MODEL_FILENAME_PB):
+        loader.load(sess, ["foo"], export_dir)
+
+    # Cleanup the directory and start again.
+    file_io.delete_recursively(export_dir)
+
+    os.makedirs(export_dir)
+    # Write an invalid text proto to saved_model.pbtxt
+    path_to_pbtxt = os.path.join(export_dir,
+                                 constants.SAVED_MODEL_FILENAME_PBTXT)
+    with open(path_to_pbtxt, "w") as f:
+      f.write("invalid content")
+    with self.test_session(graph=ops.Graph()) as sess:
+      with self.assertRaisesRegexp(IOError, "Cannot parse file.*%s" %
+                                   constants.SAVED_MODEL_FILENAME_PBTXT):
+        loader.load(sess, ["foo"], export_dir)
+
+  def testVerifySessionGraphUsage(self):
+    export_dir = os.path.join(test.get_temp_dir(),
+                              "test_verify_session_graph_usage")
+    builder = saved_model_builder.SavedModelBuilder(export_dir)
+
+    with self.test_session(graph=ops.Graph()) as sess:
+      self._init_and_validate_variable(sess, "v", 42)
+      builder.add_meta_graph_and_variables(sess, [tag_constants.TRAINING])
+
+    # Save the SavedModel to disk.
+    builder.save()
+
+    # Build a session and supply it to the load operation.
+    sess = session.Session(graph=ops.Graph())
+    loader.load(sess, [tag_constants.TRAINING], export_dir)
+
+    # Check the variable within the scope of the session and its graph.
+    with sess:
+      self.assertEqual(
+          42, ops.get_collection(ops.GraphKeys.GLOBAL_VARIABLES)[0].eval())
+
   def testSequence(self):
     export_dir = os.path.join(test.get_temp_dir(), "test_sequence")
     builder = saved_model_builder.SavedModelBuilder(export_dir)
@@ -151,6 +207,13 @@ class SavedModelTest(test.TestCase):
       self._init_and_validate_variable(sess, "v", 43)
       builder.add_meta_graph([tag_constants.SERVING])
 
+    # Graph that updates the single variable. SavedModel invoked to:
+    # - simply add the model (weights are not updated).
+    # - multiple tags (from predefined constants).
+    with self.test_session(graph=ops.Graph()) as sess:
+      self._init_and_validate_variable(sess, "v", 45)
+      builder.add_meta_graph([tag_constants.SERVING, tag_constants.GPU])
+
     # Graph that updates the single variable. SavedModel is invoked:
     # - to add the model (weights are not updated).
     # - multiple custom tags.
@@ -171,6 +234,13 @@ class SavedModelTest(test.TestCase):
     # saved.
     with self.test_session(graph=ops.Graph()) as sess:
       loader.load(sess, [tag_constants.SERVING], export_dir)
+      self.assertEqual(
+          42, ops.get_collection(ops.GraphKeys.GLOBAL_VARIABLES)[0].eval())
+
+    # Restore the graph with multiple predefined tags whose variables were not
+    # saved.
+    with self.test_session(graph=ops.Graph()) as sess:
+      loader.load(sess, [tag_constants.SERVING, tag_constants.GPU], export_dir)
       self.assertEqual(
           42, ops.get_collection(ops.GraphKeys.GLOBAL_VARIABLES)[0].eval())
 
@@ -699,6 +769,35 @@ class SavedModelTest(test.TestCase):
       self.assertEqual(2, ops.get_collection("v")[1].eval())
       ops.get_collection("init_op")[0].run()
       self.assertEqual(3, ops.get_collection("v")[2].eval())
+
+  def testCustomSaveable(self):
+    export_dir = os.path.join(test.get_temp_dir(), "custom_saveable")
+    builder = saved_model_builder.SavedModelBuilder(export_dir)
+
+    with session.Session(
+        graph=ops.Graph(),
+        config=config_pb2.ConfigProto(device_count={"CPU": 2})) as sess:
+      # CheckpointedOp is a key-value table that can be saved across sessions.
+      # The table register itself in SAVEABLE_OBJECTS collection.
+      v1 = saver_test_utils.CheckpointedOp(name="v1")
+      variables.global_variables_initializer().run()
+      v1.insert("k1", 3.0).run()
+      # Once the table is restored, we can access it through this reference.
+      ops.add_to_collection("table_ref", v1.table_ref)
+      builder.add_meta_graph_and_variables(sess, ["foo"])
+
+    # Save the SavedModel to disk.
+    builder.save()
+
+    with session.Session(
+        graph=ops.Graph(),
+        config=config_pb2.ConfigProto(device_count={"CPU": 2})) as sess:
+      loader.load(sess, ["foo"], export_dir)
+      # Instantiate a wrapper object from the checkpointed reference.
+      v1 = saver_test_utils.CheckpointedOp(
+          name="v1", table_ref=ops.get_collection("table_ref")[0])
+      self.assertEqual(b"k1", v1.keys().eval())
+      self.assertEqual(3.0, v1.values().eval())
 
   def testClearDevices(self):
     export_dir = os.path.join(test.get_temp_dir(), "test_clear_devices")

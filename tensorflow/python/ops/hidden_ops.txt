@@ -6,6 +6,7 @@ ConcatOffset
 Concat
 ConcatV2
 Const
+DebugGradientIdentity
 EditDistance
 ExpandDims
 ListDiff
@@ -14,6 +15,7 @@ MirrorPadGrad
 OneHot
 Pack
 Pad
+PadV2
 ParallelConcat
 Placeholder
 RefIdentity
@@ -60,18 +62,30 @@ FakeQueue
 FIFOQueue
 FIFOQueueV2
 GetSessionHandle
+GetSessionHandleV2
 GetSessionTensor
 HashTable
+HashTableV2
 InitializeTable
+InitializeTableV2
 InitializeTableFromTextFile
+InitializeTableFromTextFileV2
 LookupTableExport
+LookupTableExportV2
 LookupTableFind
+LookupTableFindV2
 LookupTableImport
+LookupTableImportV2
 LookupTableInsert
+LookupTableInsertV2
 LookupTableSize
+LookupTableSizeV2
 MutableDenseHashTable
+MutableDenseHashTableV2
 MutableHashTable
+MutableHashTableV2
 MutableHashTableOfTensors
+MutableHashTableOfTensorsV2
 Mutex
 MutexAcquire
 MutexRelease
@@ -99,6 +113,10 @@ Stack
 StackClose
 StackPop
 StackPush
+StackV2
+StackCloseV2
+StackPopV2
+StackPushV2
 TensorArray
 TensorArrayClose
 TensorArrayCloseV2
@@ -145,12 +163,12 @@ ResizeBilinearGrad
 ResizeNearestNeighborGrad
 AdjustContrastv2
 ScaleImageGrad
+SampleDistortedBoundingBox
+SampleDistortedBoundingBoxV2
 
 # io_ops
 FixedLengthRecordReader
 IdentityReader
-ReaderClose
-ReaderEnqueueWork
 ReaderNumRecordsProduced
 ReaderNumWorkUnitsCompleted
 ReaderRead
@@ -161,8 +179,6 @@ ReaderSerializeState
 ReaderWorkQueueLength
 FixedLengthRecordReaderV2
 IdentityReaderV2
-ReaderCloseV2
-ReaderEnqueueWorkV2
 ReaderNumRecordsProducedV2
 ReaderNumWorkUnitsCompletedV2
 ReaderReadV2
@@ -183,6 +199,7 @@ WholeFileReader
 TextLineReaderV2
 TFRecordReaderV2
 WholeFileReaderV2
+LMDBReader
 
 # linalg_ops
 BatchCholesky
@@ -204,13 +221,13 @@ Svd
 Assert
 AudioSummary
 AudioSummaryV2
-HistogramAccumulatorSummary
 HistogramSummary
 ImageSummary
 MergeSummary
 Print
 ScalarSummary
 TensorSummary
+TensorSummaryV2
 
 # math_ops
 Abs
@@ -224,6 +241,7 @@ BatchFFT3D
 BatchIFFT
 BatchIFFT2D
 BatchIFFT3D
+Bucketize
 Complex
 ComplexAbs
 Conj
@@ -256,6 +274,7 @@ TruncateMod
 
 # nn_ops
 AvgPoolGrad  # "*Grad" accessible through nn_grad instead of nn_ops.
+AvgPool3DGrad
 BatchNormWithGlobalNormalization
 BatchNormWithGlobalNormalizationGrad
 FusedBatchNorm
@@ -264,6 +283,10 @@ SparseSoftmaxCrossEntropyWithLogits
 LRNGrad
 MaxPoolGrad
 MaxPoolGradWithArgmax
+MaxPoolGradGrad
+MaxPoolGradGradWithArgmax
+MaxPool3DGrad
+MaxPool3DGradGrad
 ReluGrad
 Relu6Grad
 EluGrad
@@ -287,6 +310,7 @@ ParseSingleSequenceExample
 
 # random_ops
 RandomGamma
+RandomPoisson
 RandomUniform
 RandomUniformInt
 RandomShuffle
@@ -299,9 +323,6 @@ PyFunc
 PyFuncStateless
 
 # sdca_ops
-SdcaFprint
-SdcaOptimizer
-SdcaShrinkL1
 
 # state_ops
 Variable
@@ -319,6 +340,9 @@ SerializeSparse
 SparseAdd
 SparseAddGrad
 SparseConcat
+SparseCross
+SparseFillEmptyRows
+SparseFillEmptyRowsGrad
 SparseSplit
 SparseSelectLastK
 SparseReorder

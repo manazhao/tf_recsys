@@ -62,6 +62,7 @@ REGISTER_OP("SaveV2")
     .Input("shape_and_slices: string")
     .Input("tensors: dtypes")
     .Attr("dtypes: list(type)")
+    .SetIsStateful()
     .SetShapeFn([](InferenceContext* c) {
       ShapeHandle unused;
       ShapeHandle s;
@@ -101,14 +102,14 @@ REGISTER_OP("RestoreV2")
     .Input("shape_and_slices: string")
     .Output("tensors: dtypes")
     .Attr("dtypes: list(type)")
+    .SetIsStateful()
     .SetShapeFn([](InferenceContext* c) {
       ShapeHandle shape0, shape1, shape2;
       TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 0, &shape0));
       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &shape1));
       TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 1, &shape2));
       TF_RETURN_IF_ERROR(c->Merge(shape1, shape2, &shape0));
-      c->set_output(0, c->UnknownShape());
-      return Status::OK();
+      return UnknownShape(c);
     })
     .Doc(R"doc(
 Restores tensors from a V2 checkpoint.
@@ -141,6 +142,7 @@ REGISTER_OP("MergeV2Checkpoints")
     .Input("checkpoint_prefixes: string")
     .Input("destination_prefix: string")
     .Attr("delete_old_dirs: bool = true")
+    .SetIsStateful()
     .SetShapeFn([](InferenceContext* c) {
       ShapeHandle unused;
       TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 1, &unused));
@@ -169,6 +171,7 @@ REGISTER_OP("Save")
     .Input("tensor_names: string")
     .Input("data: T")
     .Attr("T: list(type)")
+    .SetIsStateful()
     .SetShapeFn([](InferenceContext* c) {
       ShapeHandle unused;
       ShapeHandle s;
@@ -204,6 +207,7 @@ REGISTER_OP("SaveSlices")
     .Input("shapes_and_slices: string")
     .Input("data: T")
     .Attr("T: list(type)")
+    .SetIsStateful()
     .SetShapeFn([](InferenceContext* c) {
       ShapeHandle unused;
       ShapeHandle s;
@@ -261,6 +265,7 @@ REGISTER_OP("Restore")
     .Output("tensor: dt")
     .Attr("dt: type")
     .Attr("preferred_shard: int = -1")
+    .SetIsStateful()
     .SetShapeFn([](InferenceContext* c) {
       ShapeHandle unused;
       TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 0, &unused));
@@ -305,6 +310,7 @@ REGISTER_OP("RestoreSlice")
     .Output("tensor: dt")
     .Attr("dt: type")
     .Attr("preferred_shard: int = -1")
+    .SetIsStateful()
     .SetShapeFn([](InferenceContext* c) {
       ShapeHandle unused;
       TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 0, &unused));
@@ -397,6 +403,7 @@ shared_name: If non-empty, this reader is named in the given bucket
              with this shared_name. Otherwise, the node name is used instead.
 )doc");
 
+// TODO(cwhipkey): mark this deprecated in favor of V2.
 REGISTER_OP("TextLineReader")
     .Output("reader_handle: Ref(string)")
     .Attr("skip_header_lines: int = 0")
@@ -433,11 +440,13 @@ shared_name: If non-empty, this reader is named in the given bucket
              with this shared_name. Otherwise, the node name is used instead.
 )doc");
 
+// TODO(cwhipkey): mark this deprecated in favor of V2.
 REGISTER_OP("FixedLengthRecordReader")
     .Output("reader_handle: Ref(string)")
     .Attr("header_bytes: int = 0")
     .Attr("record_bytes: int")
     .Attr("footer_bytes: int = 0")
+    .Attr("hop_bytes: int = 0")
     .Attr("container: string = ''")
     .Attr("shared_name: string = ''")
     .SetIsStateful()
@@ -446,6 +455,11 @@ REGISTER_OP("FixedLengthRecordReader")
 A Reader that outputs fixed-length records from a file.
 
 reader_handle: The handle to reference the Reader.
+header_bytes: Number of bytes in the header, defaults to 0.
+record_bytes: Number of bytes in the record.
+footer_bytes: Number of bytes in the footer, defaults to 0.
+hop_bytes: Number of bytes to hop before each read. Default of 0 means using
+        record_bytes.
 container: If non-empty, this reader is placed in the given container.
         Otherwise, a default container is used.
 shared_name: If non-empty, this reader is named in the given bucket
@@ -457,20 +471,30 @@ REGISTER_OP("FixedLengthRecordReaderV2")
     .Attr("header_bytes: int = 0")
     .Attr("record_bytes: int")
     .Attr("footer_bytes: int = 0")
+    .Attr("hop_bytes: int = 0")
     .Attr("container: string = ''")
     .Attr("shared_name: string = ''")
+    .Attr("encoding: string = ''")
     .SetIsStateful()
     .SetShapeFn(shape_inference::ScalarShape)
     .Doc(R"doc(
 A Reader that outputs fixed-length records from a file.
 
 reader_handle: The handle to reference the Reader.
+header_bytes: Number of bytes in the header, defaults to 0.
+record_bytes: Number of bytes in the record.
+footer_bytes: Number of bytes in the footer, defaults to 0.
+hop_bytes: Number of bytes to hop before each read. Default of 0 means using
+        record_bytes.
 container: If non-empty, this reader is placed in the given container.
         Otherwise, a default container is used.
 shared_name: If non-empty, this reader is named in the given bucket
              with this shared_name. Otherwise, the node name is used instead.
+encoding: The type of encoding for the file. Currently ZLIB and GZIP
+        are supported. Defaults to none.
 )doc");
 
+// TODO(cwhipkey): mark this deprecated in favor of V2.
 REGISTER_OP("TFRecordReader")
     .Output("reader_handle: Ref(string)")
     .Attr("container: string = ''")
@@ -505,6 +529,22 @@ shared_name: If non-empty, this reader is named in the given bucket
              with this shared_name. Otherwise, the node name is used instead.
 )doc");
 
+REGISTER_OP("LMDBReader")
+    .Output("reader_handle: Ref(string)")
+    .Attr("container: string = ''")
+    .Attr("shared_name: string = ''")
+    .SetIsStateful()
+    .SetShapeFn(TwoElementOutput)
+    .Doc(R"doc(
+A Reader that outputs the records from a LMDB file.
+reader_handle: The handle to reference the Reader.
+container: If non-empty, this reader is placed in the given container.
+        Otherwise, a default container is used.
+shared_name: If non-empty, this reader is named in the given bucket
+             with this shared_name. Otherwise, the node name is used instead.
+)doc");
+
+// TODO(cwhipkey): mark this deprecated in favor of V2.
 REGISTER_OP("IdentityReader")
     .Output("reader_handle: Ref(string)")
     .Attr("container: string = ''")
@@ -799,7 +839,8 @@ REGISTER_OP("WriteFile")
       return Status::OK();
     })
     .Doc(R"doc(
-Writes contents to the file at input filename. Creates file if not existing.
+Writes contents to the file at input filename. Creates file and recursively
+creates directory if not existing.
 
 filename: scalar. The name of the file to which we write the contents.
 contents: scalar. The content to be written to the output file.
@@ -810,17 +851,17 @@ REGISTER_OP("MatchingFiles")
     .Output("filenames: string")
     .SetShapeFn([](InferenceContext* c) {
       ShapeHandle unused;
-      TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 0, &unused));
+      TF_RETURN_IF_ERROR(c->WithRankAtMost(c->input(0), 1, &unused));
       c->set_output(0, c->Vector(InferenceContext::kUnknownDim));
       return Status::OK();
     })
     .Doc(R"doc(
-Returns the set of files matching a pattern.
+Returns the set of files matching one or more glob patterns.
 
 Note that this routine only supports wildcard characters in the
 basename portion of the pattern, not in the directory portion.
 
-pattern: A (scalar) shell wildcard pattern.
+pattern: Shell wildcard pattern(s). Scalar or vector of type string.
 filenames: A vector of matching filenames.
 )doc");
 

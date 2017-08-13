@@ -38,6 +38,7 @@ limitations under the License.
 #include "tensorflow/core/distributed_runtime/rpc/grpc_worker_service_impl.h"
 #include "tensorflow/core/distributed_runtime/worker.h"
 #include "tensorflow/core/distributed_runtime/worker_cache.h"
+#include "tensorflow/core/distributed_runtime/worker_session.h"
 #include "tensorflow/core/framework/cancellation.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/lib/core/errors.h"
@@ -54,13 +55,10 @@ class GrpcWorkerService : public AsyncServiceInterface {
   GrpcWorkerService(GrpcWorker* worker, ::grpc::ServerBuilder* builder)
       : worker_(worker), is_shutdown_(false) {
     builder->RegisterService(&worker_service_);
-    cq_ = builder->AddCompletionQueue().release();
+    cq_ = builder->AddCompletionQueue();
   }
 
-  ~GrpcWorkerService() {
-    delete shutdown_alarm_;
-    delete cq_;
-  }
+  ~GrpcWorkerService() override { delete shutdown_alarm_; }
 
   void Shutdown() override {
     bool did_shutdown = false;
@@ -77,7 +75,7 @@ class GrpcWorkerService : public AsyncServiceInterface {
       // that causes the completion queue to be shut down on the
       // polling thread.
       shutdown_alarm_ =
-          new ::grpc::Alarm(cq_, gpr_now(GPR_CLOCK_MONOTONIC), nullptr);
+          new ::grpc::Alarm(cq_.get(), gpr_now(GPR_CLOCK_MONOTONIC), nullptr);
     }
   }
 
@@ -99,7 +97,7 @@ class GrpcWorkerService : public AsyncServiceInterface {
       Call<GrpcWorkerService, grpc::WorkerService::AsyncService,       \
            method##Request, method##Response>::                        \
           EnqueueRequestForMethod(                                     \
-              &worker_service_, cq_,                                   \
+              &worker_service_, cq_.get(),                             \
               static_cast<int>(GrpcWorkerMethod::k##method),           \
               &GrpcWorkerService::method##Handler, (supports_cancel)); \
     }                                                                  \
@@ -115,6 +113,7 @@ class GrpcWorkerService : public AsyncServiceInterface {
     // completes, and we may decide to bound some of the request
     // types.
     ENQUEUE_REQUEST(GetStatus, false);
+    ENQUEUE_REQUEST(CreateWorkerSession, false);
     ENQUEUE_REQUEST(CleanupAll, false);
     ENQUEUE_REQUEST(RegisterGraph, false);
     ENQUEUE_REQUEST(DeregisterGraph, false);
@@ -151,14 +150,14 @@ class GrpcWorkerService : public AsyncServiceInterface {
   }
 
  private:
-  GrpcWorker* worker_;                 // Not owned.
-  ::grpc::ServerCompletionQueue* cq_;  // Owned.
+  GrpcWorker* worker_ = nullptr;  // Not owned.
+  std::unique_ptr<::grpc::ServerCompletionQueue> cq_;
 
   grpc::WorkerService::AsyncService worker_service_;
 
   mutex shutdown_mu_;
   bool is_shutdown_ GUARDED_BY(shutdown_mu_);
-  ::grpc::Alarm* shutdown_alarm_;
+  ::grpc::Alarm* shutdown_alarm_ = nullptr;
 
   void Schedule(std::function<void()> f) {
     worker_->env()->compute_pool->Schedule(std::move(f));
@@ -181,6 +180,16 @@ class GrpcWorkerService : public AsyncServiceInterface {
       call->SendResponse(ToGrpcStatus(s));
     });
     ENQUEUE_REQUEST(GetStatus, false);
+  }
+
+  void CreateWorkerSessionHandler(
+      WorkerCall<CreateWorkerSessionRequest, CreateWorkerSessionResponse>*
+          call) {
+    Schedule([this, call]() {
+      Status s = worker_->CreateWorkerSession(&call->request, &call->response);
+      call->SendResponse(ToGrpcStatus(s));
+    });
+    ENQUEUE_REQUEST(CreateWorkerSession, false);
   }
 
   void CleanupAllHandler(
@@ -278,7 +287,7 @@ class GrpcWorkerService : public AsyncServiceInterface {
       Call<GrpcWorkerService, grpc::WorkerService::AsyncService,
            RecvTensorRequest, ::grpc::ByteBuffer>::
           EnqueueRequestForMethod(
-              &worker_service_, cq_,
+              &worker_service_, cq_.get(),
               static_cast<int>(GrpcWorkerMethod::kRecvTensor),
               &GrpcWorkerService::RecvTensorHandlerRaw,
               true /* supports cancel*/);
@@ -377,15 +386,18 @@ void GrpcWorker::RecvTensorAsync(CallOptions* opts,
           done(status);
         }
       });
-  }
+}
 
-  WorkerEnv* GrpcWorker::env() { return env_; }
+WorkerEnv* GrpcWorker::env() { return env_; }
 
-  GrpcWorker* NewGrpcWorker(WorkerEnv* env) { return new GrpcWorker(env); }
+std::unique_ptr<GrpcWorker> NewGrpcWorker(WorkerEnv* env) {
+  return std::unique_ptr<GrpcWorker>(new GrpcWorker(env));
+}
 
-  AsyncServiceInterface* NewGrpcWorkerService(GrpcWorker* worker,
-                                              ::grpc::ServerBuilder* builder) {
-    return new GrpcWorkerService(worker, builder);
+std::unique_ptr<AsyncServiceInterface> NewGrpcWorkerService(
+    GrpcWorker* worker, ::grpc::ServerBuilder* builder) {
+  return std::unique_ptr<AsyncServiceInterface>(
+      new GrpcWorkerService(worker, builder));
 }
 
 }  // namespace tensorflow

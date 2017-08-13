@@ -18,10 +18,10 @@ limitations under the License.
 #include <stdlib.h>
 #include <utility>
 
+#include "tensorflow/compiler/xla/legacy_flags/debug_options_flags.h"
 #include "tensorflow/compiler/xla/ptr_util.h"
 #include "tensorflow/compiler/xla/service/backend.h"
 #include "tensorflow/compiler/xla/service/compiler.h"
-#include "tensorflow/compiler/xla/service/hlo_module_config.h"
 #include "tensorflow/compiler/xla/statusor.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/io/path.h"
@@ -33,6 +33,20 @@ limitations under the License.
 
 namespace xla {
 
+std::unique_ptr<HloModule> CodegenTestBase::CreateNewModuleWithEmbeddedIr(
+    bool ftz) {
+  HloModuleConfig config;
+  auto debug_options = legacy_flags::GetDebugOptionsFromFlags();
+  debug_options.set_xla_embed_ir_in_executable(true);
+  debug_options.set_xla_gpu_ftz(ftz);
+  // TODO(b/38354253): Change tests to use Parameters instead of Constants.
+  debug_options.add_xla_disable_hlo_passes("constant_folding");
+  config.set_debug_options(debug_options);
+
+  return MakeUnique<HloModule>(TestName(), VersionedComputationHandle(),
+                               config);
+}
+
 void CodegenTestBase::CompileAndVerifyIr(std::unique_ptr<HloModule> hlo_module,
                                          const string& pattern) {
   std::unique_ptr<Executable> executable =
@@ -43,33 +57,32 @@ void CodegenTestBase::CompileAndVerifyIr(std::unique_ptr<HloModule> hlo_module,
 
 std::unique_ptr<Executable> CodegenTestBase::CompileToExecutable(
     std::unique_ptr<HloModule> hlo_module) {
-  auto module_config = MakeUnique<HloModuleConfig>(
-      hlo_module->entry_computation()->ComputeProgramShape());
-  module_config->set_fast_math_disabled(fast_math_disabled_);
   return backend_->compiler()
-      ->Compile(std::move(hlo_module), std::move(module_config),
-                test_hlo_dumper_, backend_->default_stream_executor())
+      ->Compile(std::move(hlo_module), backend_->default_stream_executor())
       .ConsumeValueOrDie();
 }
 
 void CodegenTestBase::RunFileCheck(const string& input, const string& pattern) {
+  using tensorflow::io::JoinPath;
+
   // Write input to a temporary file.
   char tempdir_template[] = "/tmp/ir_testXXXXXX";
   char* tempdir_name = mkdtemp(tempdir_template);
   CHECK_NOTNULL(tempdir_name);
-  string pattern_path =
-      tensorflow::io::JoinPath(tempdir_name, "xla_hlo_test_ir_pattern");
+  string pattern_path = JoinPath(tempdir_name, "xla_hlo_test_ir_pattern");
   TF_CHECK_OK(tensorflow::WriteStringToFile(tensorflow::Env::Default(),
                                             pattern_path, pattern));
 
   // Invoke FileCheck to check whether input matches `pattern`.
-  tensorflow::SubProcess file_check_process;
-  const char* test_srcdir = getenv("TEST_SRCDIR");
-  if (test_srcdir == nullptr) {
-    test_srcdir = ".";
+  const char* file_check_path_suffix = "external/llvm/FileCheck";
+  string file_check_path;
+  if (const char* test_srcdir = getenv("TEST_SRCDIR")) {
+    file_check_path = JoinPath(test_srcdir, file_check_path_suffix);
+  } else {
+    file_check_path = file_check_path_suffix;
   }
-  string file_check_path = tensorflow::io::JoinPath(
-      test_srcdir, "external/llvm/FileCheck");
+
+  tensorflow::SubProcess file_check_process;
   file_check_process.SetProgram(file_check_path,
                                 {file_check_path, pattern_path});
   file_check_process.SetChannelAction(tensorflow::CHAN_STDIN,

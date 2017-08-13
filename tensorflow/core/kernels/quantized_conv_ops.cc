@@ -88,9 +88,9 @@ class ReferenceConvFunctor {
     int filter_top_offset;
     if (padding == VALID) {
       filter_left_offset =
-          ((output_width - 1) * stride + filter_width - input_width) / 2;
+          ((output_width - 1) * stride + filter_width - input_width + 1) / 2;
       filter_top_offset =
-          ((output_height - 1) * stride + filter_height - input_height) / 2;
+          ((output_height - 1) * stride + filter_height - input_height + 1) / 2;
     } else {
       filter_left_offset =
           ((output_width - 1) * stride + filter_width - input_width) / 2;
@@ -211,7 +211,7 @@ class Im2ColConvFunctor {
         ++warning_count;
         LOG(WARNING)
             << "For kernel '" << context->op_kernel().name() << "' from input '"
-            << context->op_kernel().def().input(0)
+            << context->op_kernel().requested_input(0)
             << "': Zero is not representable in the quantized range used by the"
             << " input. This means QuantizedConv2d has to fall back to a slow"
             << " implementation, since the border of zero values can't be"
@@ -233,9 +233,9 @@ class Im2ColConvFunctor {
     int filter_top_offset;
     if (padding == VALID) {
       filter_left_offset =
-          ((output_width - 1) * stride + filter_width - input_width) / 2;
+          ((output_width - 1) * stride + filter_width - input_width + 1) / 2;
       filter_top_offset =
-          ((output_height - 1) * stride + filter_height - input_height) / 2;
+          ((output_height - 1) * stride + filter_height - input_height + 1) / 2;
     } else {
       filter_left_offset =
           ((output_width - 1) * stride + filter_width - input_width) / 2;

@@ -20,39 +20,13 @@ from __future__ import print_function
 
 import time
 
-import portpicker
-
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import ops
+from tensorflow.python.framework.test_util import create_local_cluster
 from tensorflow.python.ops import variables
 from tensorflow.python.platform import test
 from tensorflow.python.training import gradient_descent
-from tensorflow.python.training import server_lib
 from tensorflow.python.training import training
-
-
-def create_local_cluster(num_workers, num_ps, protocol="grpc"):
-  """Create local GRPC servers and return them."""
-  worker_ports = [portpicker.pick_unused_port() for _ in range(num_workers)]
-  ps_ports = [portpicker.pick_unused_port() for _ in range(num_ps)]
-  cluster_dict = {
-      "worker": ["localhost:%s" % port for port in worker_ports],
-      "ps": ["localhost:%s" % port for port in ps_ports]
-  }
-  cs = server_lib.ClusterSpec(cluster_dict)
-
-  workers = [
-      server_lib.Server(
-          cs, job_name="worker", protocol=protocol, task_index=ix, start=True)
-      for ix in range(num_workers)
-  ]
-  ps_servers = [
-      server_lib.Server(
-          cs, job_name="ps", protocol=protocol, task_index=ix, start=True)
-      for ix in range(num_ps)
-  ]
-
-  return workers, ps_servers
 
 
 # Creates the workers and return their sessions, graphs, train_ops.
@@ -267,6 +241,7 @@ class SyncReplicasOptimizerTest(test.TestCase):
     # Starts worker 1.
     thread_1.start()
     thread_1.join()
+    thread_0.join()
 
     # The global step should now be 2 and the gradients should have been
     # applied again.
@@ -275,6 +250,31 @@ class SyncReplicasOptimizerTest(test.TestCase):
                         sessions[1].run(var_0_g_1))
     self.assertAllClose(-1.2 - (0.9 + 1.1) / 2 * 2.0,
                         sessions[1].run(var_1_g_1))
+
+
+class SyncReplicasOptimizerHookTest(test.TestCase):
+
+  def testErrorIfUsedBeforeMinimizeCalled(self):
+    opt = training.SyncReplicasOptimizer(
+        opt=gradient_descent.GradientDescentOptimizer(1.0),
+        replicas_to_aggregate=1,
+        total_num_replicas=1)
+    hook = opt.make_session_run_hook(True)
+    with self.assertRaisesRegexp(ValueError,
+                                 "apply_gradient should be called"):
+      hook.begin()
+
+  def testCanCreatedBeforeMinimizeCalled(self):
+    """This behavior is required to be integrated with Estimators."""
+    opt = training.SyncReplicasOptimizer(
+        opt=gradient_descent.GradientDescentOptimizer(1.0),
+        replicas_to_aggregate=1,
+        total_num_replicas=1)
+    hook = opt.make_session_run_hook(True)
+    v = variables.Variable([0.])
+    global_step = variables.Variable(0, name="global_step", trainable=False)
+    opt.minimize(v, global_step=global_step)
+    hook.begin()
 
 
 if __name__ == "__main__":

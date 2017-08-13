@@ -49,12 +49,12 @@ def feature_column_schema_from_config(schema_pbtxt):
   """
   with tf.gfile.GFile(schema_pbtxt, "r") as f:
       schema = fcs_pb2.FeatureColumnSchema()
-    text_format.Parse(f.read(), schema)
-    return schema
+      text_format.Parse(f.read(), schema)
+      return schema
 
 
 def feature_columns_from_file(schema_pbtxt, include_target):
-    """Creates feature columns by loading `FeatureColumnSchema` from config file.
+  """Creates feature columns by loading `FeatureColumnSchema` from config file.
 
   Args:
     schema_pbtxt: file path of `FeatureColumnSchema` protobuf text.

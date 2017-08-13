@@ -28,27 +28,110 @@ limitations under the License.
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/gtl/array_slice.h"
+#include "tensorflow/core/lib/gtl/optional.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/types.h"
 
 namespace xla {
 
+namespace internal {
+
+// Internal representation of each node in a ShapeTree.
+template <typename T>
+struct ShapeTreeNode {
+  // Data corresponding to this node.
+  T data;
+
+  // Children of this node.
+  std::vector<std::unique_ptr<ShapeTreeNode>> children;
+
+  ShapeTreeNode() = default;
+  explicit ShapeTreeNode(const T& data) : data(data) {}
+
+  ShapeTreeNode(const ShapeTreeNode& other)
+      : data(other.data), children(other.children.size()) {
+    for (size_t i = 0; i < children.size(); ++i) {
+      children[i] = MakeUnique<ShapeTreeNode>(*other.children[i]);
+    }
+  }
+
+  ShapeTreeNode& operator=(const ShapeTreeNode& other) {
+    if (this != &other) {
+      data = other.data;
+      children.resize(other.children.size());
+      for (size_t i = 0; i < children.size(); ++i) {
+        children[i] = MakeUnique<ShapeTreeNode>(*other.children[i]);
+      }
+    }
+    return *this;
+  }
+};
+
+}  // namespace internal
+
 // A ShapeTree<T> is a recursive data structure which mirrors the structure of a
-// XLA shape and holds a value of type T for each array in the shape. For
-// array shapes, a ShapeTree trivially holds a single value of type T. For tuple
-// shapes which can be an arbitrary tree with arrays at the leaves, a ShapeTree
-// is an identically structured tree with data elements of type T at the leaves.
+// XLA shape and holds a value of type T for each subshape (i.e. tuple or array)
+// in the shape. For array shapes, a ShapeTree trivially holds a single value of
+// type T.
+//
+// For tuple shapes which can be an arbitrary tree with arrays at the leaves, a
+// ShapeTree is an identically structured tree with data elements of type T at
+// every node. I.e. the root is a tuple by definition, all interior nodes are
+// also tuples, and all leaves are arrays.
 //
 // Like the Shape data structure, this is a tree and tuple elements cannot be
-// duplicated. That is, every distinct element position in the Shape has a
-// unique T object.
+// duplicated. That is, every distinct ShapeIndex in the Shape has a unique T
+// object.
+//
+// Normally a ShapeTree owns its Shape, but for efficiency reasons, sometimes
+// it's helpful not to copy a Shape just to make a ShapeTree.  In these cases,
+// you can pass a Shape* instead of a Shape& to the ShapeTree constructor.  It's
+// then up to you to ensure that the pointed-to Shape doesn't die or mutate
+// before its ShapeTree goes away.
 template <typename T>
 class ShapeTree {
  public:
-  explicit ShapeTree(const Shape& shape);
-  ShapeTree(const Shape& shape, const T& init_value);
-  ShapeTree(const ShapeTree<T>& other);
-  ShapeTree<T>& operator=(const ShapeTree<T>& other);
+  // Default constructor creates a tree with a nil shape (i.e. an empty tuple).
+  ShapeTree() : ShapeTree(ShapeUtil::MakeNil()) {}
+
+  // Create ShapeTree with the given shape, and default-constructed T values for
+  // all nodes.
+  //
+  // The version that takes a pointer may be cheaper because it doesn't require
+  // any Shape copies, but then it's up to you to ensure that the pointer stays
+  // alive longer than this ShapeTree.
+  explicit ShapeTree(Shape shape);
+  explicit ShapeTree(const Shape* shape);
+
+  // Create ShapeTree with the given shape, and init_value for all nodes.
+  ShapeTree(Shape shape, const T& init_value);
+  ShapeTree(const Shape* shape, const T& init_value);
+
+  ShapeTree(const ShapeTree& other)
+      : root_(other.root_), shape_storage_(other.shape_storage_) {
+    // Fix up internal pointer if necessary.
+    if (shape_storage_) {
+      CHECK_EQ(other.shape_, &*other.shape_storage_);
+      shape_ = &*shape_storage_;
+    } else {
+      shape_ = other.shape_;
+    }
+  }
+
+  ShapeTree& operator=(const ShapeTree& other) {
+    root_ = other.root_;
+    shape_storage_ = other.shape_storage_;
+
+    // Fix up internal pointer if necessary.
+    if (shape_storage_) {
+      CHECK_EQ(other.shape_, &*other.shape_storage_);
+      shape_ = &*shape_storage_;
+    } else {
+      shape_ = other.shape_;
+    }
+
+    return *this;
+  }
 
   // Returns the data element associated with the array in the shape at the
   // given index (see ShapeUtil::GetSubshape for how indexes are defined).
@@ -61,198 +144,268 @@ class ShapeTree {
   // Returns true if the node at the given index is a leaf node (an array
   // shape).
   bool IsLeaf(const ShapeIndex& index) const {
-    return Lookup(index).elements_.empty();
+    return Lookup(index)->children.empty();
   }
 
   // Recursively traverses the shape and calls the given function at each
   // element. The function has the following arguments:
   //
+  //   Fn :    A callable of type void(const ShapeIndex& index, const T& data)
+  //           (or compatible).
   //   index : the index of the element in the shape. See ShapeUtil::GetSubshape
   //           for definition of index.
-  //   is_leaf : Whether this element is a leaf element in the shape. That is,
-  //             whether this index corresponds to an array and not a (nested)
-  //             tuple element.
   //   data : The data value at this elemnt.
-  //
-  // If any call to the given function returns a non-OK status, then traversal
-  // is aborted and the status value is returned.
-  using VisitorFunction = std::function<tensorflow::Status(
-      const ShapeIndex& /*index*/, bool /*is_leaf*/, const T& /*data*/)>;
-  tensorflow::Status ForEachElement(VisitorFunction func) const;
+  template <typename Fn>
+  void ForEachElement(const Fn& func) const;
 
-  using MutableVisitorFunction = std::function<tensorflow::Status(
-      const ShapeIndex& /*index*/, bool /*is_leaf*/, T* /*data*/)>;
-  tensorflow::Status ForEachMutableElement(MutableVisitorFunction func);
+  // Like ForEachElement, but the callable has type
+  //
+  //   void (const ShapeIndex& index, T* data).
+  //
+  template <typename Fn>
+  void ForEachMutableElement(const Fn& func);
+
+  // Like ForEach(Mutable)Element, but the callable returns a Status instead of
+  // void.  The first non-OK return value is returned by the ForEach* function.
+  template <typename Fn>
+  Status ForEachElementWithStatus(const Fn& func) const;
+  template <typename Fn>
+  Status ForEachMutableElementWithStatus(const Fn& func);
+
+  // Copy the subtree of values from 'other' rooted at ShapeIndex
+  // 'source_base_index' into the subtree of value in this ShapeTree rooted at
+  // 'target_base_index'.
+  //
+  // Precondition: The subshape of other.shape() at index source_base_index must
+  // be compatible with the subshape of shape() at index target_base_index.
+  void CopySubtreeFrom(const ShapeTree<T>& other,
+                       const ShapeIndex& source_base_index,
+                       const ShapeIndex& target_base_index);
+
+  bool operator==(const ShapeTree<T>& other) const;
+  bool operator!=(const ShapeTree<T>& other) const { return !(*this == other); }
 
  private:
-  // Private default constructor for non-root nodes of the tree.
-  ShapeTree() = default;
+  using Node = internal::ShapeTreeNode<T>;
+
+  // Initialize node->children based on 'shape'. All children are assigned the
+  // the given 'init_value'.
+  void InitChildren(const Shape& shape, const T& init_value, Node* node);
+
+  // Initialize node->children based on 'shape'. All children have
+  // default-constructed data values.
+  void InitChildren(const Shape& shape, Node* node);
 
   // Helpers for traversing the shape via ForEachElement. The helpers
   // recursively traverse the subtree rooted at "index" (defined as in
   // ShapeUtil::GetSubshape).
-  static tensorflow::Status ForEachHelperMutable(ShapeIndex* index,
-                                                 ShapeTree<T>* shape_tree,
-                                                 MutableVisitorFunction func);
-  static tensorflow::Status ForEachHelper(ShapeIndex* index,
-                                          const ShapeTree<T>& shape_tree,
-                                          VisitorFunction func);
-
-  // Copy all the data elements (of type T) from "other" into "this". "this"
-  // must have the same tree structure as "other" prior to calling this method.
-  void CopyDataElements(const ShapeTree<T>& other);
-
-  // Recursive helper for constructing a subtree beneath "this" node.
-  void BuildTree(const Shape& shape);
+  template <typename Fn>
+  static Status ForEachHelper(const Fn& func, const Node& node,
+                              ShapeIndex* index);
+  template <typename Fn>
+  static Status ForEachMutableHelper(const Fn& func, Node* node,
+                                     ShapeIndex* index);
 
   // Return the tree node at the given index.
-  ShapeTree<T>& Lookup(const ShapeIndex& index);
-  const ShapeTree<T>& Lookup(const ShapeIndex& index) const;
+  Node* Lookup(const ShapeIndex& index);
+  const Node* Lookup(const ShapeIndex& index) const;
 
-  // The data corresponding to the array at this node.
-  T data_;
+  // The root node, which contains all other nodes.
+  Node root_;
 
-  // The XLA shape mirrored in this ShapeTree. Only the root of the
-  // ShapeTree has this member set.
-  std::unique_ptr<Shape> shape_;
+  // If we own our Shape, this field contains it, and shape_ is a pointer into
+  // here.  Otherwise if we don't own our shape, this is nullopt.
+  tensorflow::gtl::optional<Shape> shape_storage_;
 
-  // The children of this node in the tree.
-  std::vector<std::unique_ptr<ShapeTree>> elements_;
+  // The XLA shape mirrored in this ShapeTree.  This is either a pointer into
+  // shape_storage_ or the Shape pointer passed to our constructor.
+  const Shape* shape_;
 };
 
 template <typename T>
-void ShapeTree<T>::BuildTree(const Shape& shape) {
+void ShapeTree<T>::InitChildren(const Shape& shape, const T& init_value,
+                                Node* node) {
   if (ShapeUtil::IsTuple(shape)) {
     for (int i = 0; i < ShapeUtil::TupleElementCount(shape); ++i) {
-      elements_.emplace_back(new ShapeTree());
-      elements_.back()->BuildTree(shape.tuple_shapes(i));
+      node->children.emplace_back(new Node(init_value));
+      InitChildren(shape.tuple_shapes(i), init_value,
+                   node->children.back().get());
     }
   }
 }
 
 template <typename T>
-ShapeTree<T>::ShapeTree(const Shape& shape) : shape_(MakeUnique<Shape>(shape)) {
-  // The shape_ field is just used to hold the structure of the shape. It should
-  // not be relied upon to store layout information.
-  LayoutUtil::ClearLayout(shape_.get());
-  BuildTree(*shape_);
-}
-
-template <typename T>
-ShapeTree<T>::ShapeTree(const Shape& shape, const T& init_value)
-    : shape_(MakeUnique<Shape>(shape)) {
-  LayoutUtil::ClearLayout(shape_.get());
-  BuildTree(*shape_);
-  TF_CHECK_OK(ForEachMutableElement(
-      [&init_value](const ShapeIndex& /*index*/, bool /*is_leaf*/, bool* data) {
-        *data = init_value;
-        return tensorflow::Status::OK();
-      }));
-}
-
-template <typename T>
-ShapeTree<T>::ShapeTree(const ShapeTree& other)
-    : shape_(MakeUnique<Shape>(other.shape())) {
-  LayoutUtil::ClearLayout(shape_.get());
-  BuildTree(*shape_);
-  CopyDataElements(other);
-}
-
-template <typename T>
-ShapeTree<T>& ShapeTree<T>::operator=(const ShapeTree<T>& other) {
-  if (this == &other) {
-    return *this;
+void ShapeTree<T>::InitChildren(const Shape& shape, Node* node) {
+  if (ShapeUtil::IsTuple(shape)) {
+    for (int i = 0; i < ShapeUtil::TupleElementCount(shape); ++i) {
+      node->children.emplace_back(new Node());
+      InitChildren(shape.tuple_shapes(i), node->children.back().get());
+    }
   }
-  elements_.clear();
-  shape_ = MakeUnique<Shape>(other.shape());
-  LayoutUtil::ClearLayout(shape_.get());
-
-  BuildTree(*shape_);
-  CopyDataElements(other);
-  return *this;
 }
 
 template <typename T>
-void ShapeTree<T>::CopyDataElements(const ShapeTree<T>& other) {
-  CHECK(ShapeUtil::Compatible(shape(), other.shape()));
-  TF_CHECK_OK(ForEachMutableElement(
-      [&other](const ShapeIndex& index, bool /*is_leaf*/, T* data) {
-        *data = other.element(index);
-        return tensorflow::Status::OK();
-      }));
+ShapeTree<T>::ShapeTree(Shape shape)
+    : root_(), shape_storage_(std::move(shape)), shape_(&*shape_storage_) {
+  // The shape_ field is just used to hold the structure of the shape.
+  // It should not be relied upon to store layout information.
+  LayoutUtil::ClearLayout(&*shape_storage_);
+  InitChildren(*shape_, &root_);
+}
+
+template <typename T>
+ShapeTree<T>::ShapeTree(const Shape* shape) : root_(), shape_(shape) {
+  InitChildren(*shape_, &root_);
+}
+
+template <typename T>
+ShapeTree<T>::ShapeTree(Shape shape, const T& init_value)
+    : root_(init_value),
+      shape_storage_(std::move(shape)),
+      shape_(&*shape_storage_) {
+  // The shape_ field is just used to hold the structure of the shape.
+  // It should not be relied upon to store layout information.
+  LayoutUtil::ClearLayout(&*shape_storage_);
+  InitChildren(*shape_, init_value, &root_);
+}
+
+template <typename T>
+ShapeTree<T>::ShapeTree(const Shape* shape, const T& init_value)
+    : root_(init_value), shape_(shape) {
+  InitChildren(*shape_, init_value, &root_);
 }
 
 template <typename T>
 const T& ShapeTree<T>::element(const ShapeIndex& index) const {
-  return Lookup(index).data_;
+  return Lookup(index)->data;
 }
 
 template <typename T>
 T* ShapeTree<T>::mutable_element(const ShapeIndex& index) {
-  return &Lookup(index).data_;
+  return &Lookup(index)->data;
 }
 
 template <typename T>
-ShapeTree<T>& ShapeTree<T>::Lookup(const ShapeIndex& index) {
-  ShapeTree<T>* node = this;
-  for (auto& i : index) {
+internal::ShapeTreeNode<T>* ShapeTree<T>::Lookup(const ShapeIndex& index) {
+  Node* node = &root_;
+  for (const int64 i : index) {
     CHECK_GE(i, 0);
-    CHECK_LT(i, node->elements_.size());
-    node = node->elements_[i].get();
+    CHECK_LT(i, node->children.size());
+    node = node->children[i].get();
   }
-  return *node;
+  return node;
 }
 
 template <typename T>
-const ShapeTree<T>& ShapeTree<T>::Lookup(const ShapeIndex& index) const {
-  return const_cast<ShapeTree<T>*>(this)->Lookup(index);
+const internal::ShapeTreeNode<T>* ShapeTree<T>::Lookup(
+    const ShapeIndex& index) const {
+  return const_cast<ShapeTree*>(this)->Lookup(index);
 }
 
 /* static */
 template <typename T>
-tensorflow::Status ShapeTree<T>::ForEachHelperMutable(
-    ShapeIndex* index, ShapeTree<T>* shape_tree,
-    ShapeTree<T>::MutableVisitorFunction func) {
-  TF_RETURN_IF_ERROR(
-      func(*index, shape_tree->elements_.empty(), &shape_tree->data_));
-  for (int i = 0; i < shape_tree->elements_.size(); ++i) {
+template <typename Fn>
+Status ShapeTree<T>::ForEachHelper(const Fn& func, const Node& node,
+                                   ShapeIndex* index) {
+  TF_RETURN_IF_ERROR(func(*index, node.data));
+  for (int64 i = 0; i < node.children.size(); ++i) {
+    index->push_back(i);
+    TF_RETURN_IF_ERROR(ForEachHelper(func, *node.children[i], index));
+    index->pop_back();
+  }
+  return Status::OK();
+}
+
+/* static */
+template <typename T>
+template <typename Fn>
+Status ShapeTree<T>::ForEachMutableHelper(const Fn& func, Node* node,
+                                          ShapeIndex* index) {
+  TF_RETURN_IF_ERROR(func(*index, &node->data));
+  for (int64 i = 0; i < node->children.size(); ++i) {
     index->push_back(i);
     TF_RETURN_IF_ERROR(
-        ForEachHelperMutable(index, shape_tree->elements_[i].get(), func));
+        ForEachMutableHelper(func, node->children[i].get(), index));
     index->pop_back();
   }
-
-  return tensorflow::Status::OK();
-}
-
-/* static */
-template <typename T>
-tensorflow::Status ShapeTree<T>::ForEachHelper(
-    ShapeIndex* index, const ShapeTree<T>& shape_tree,
-    ShapeTree<T>::VisitorFunction func) {
-  TF_RETURN_IF_ERROR(
-      func(*index, shape_tree.elements_.empty(), shape_tree.data_));
-  for (int i = 0; i < shape_tree.elements_.size(); ++i) {
-    index->push_back(i);
-    TF_RETURN_IF_ERROR(ForEachHelper(index, *shape_tree.elements_[i], func));
-    index->pop_back();
-  }
-
-  return tensorflow::Status::OK();
+  return Status::OK();
 }
 
 template <typename T>
-tensorflow::Status ShapeTree<T>::ForEachElement(
-    ShapeTree<T>::VisitorFunction func) const {
+template <typename Fn>
+Status ShapeTree<T>::ForEachElementWithStatus(const Fn& func) const {
   ShapeIndex index;
-  return ForEachHelper(&index, *this, func);
+  return ForEachHelper(func, root_, &index);
 }
 
 template <typename T>
-tensorflow::Status ShapeTree<T>::ForEachMutableElement(
-    ShapeTree<T>::MutableVisitorFunction func) {
+template <typename Fn>
+Status ShapeTree<T>::ForEachMutableElementWithStatus(const Fn& func) {
   ShapeIndex index;
-  return ForEachHelperMutable(&index, this, func);
+  return ForEachMutableHelper(func, &root_, &index);
+}
+
+template <typename T>
+template <typename Fn>
+void ShapeTree<T>::ForEachElement(const Fn& func) const {
+  ShapeIndex index;
+  return ForEachHelper(
+             [&func](const ShapeIndex& index, const T& data) {
+               func(index, data);
+               return Status::OK();
+             },
+             root_, &index)
+      .IgnoreError();
+}
+
+template <typename T>
+template <typename Fn>
+void ShapeTree<T>::ForEachMutableElement(const Fn& func) {
+  ShapeIndex index;
+  return ForEachMutableHelper(
+             [&func](const ShapeIndex& index, T* data) {
+               func(index, data);
+               return Status::OK();
+             },
+             &root_, &index)
+      .IgnoreError();
+}
+
+template <typename T>
+void ShapeTree<T>::CopySubtreeFrom(const ShapeTree<T>& other,
+                                   const ShapeIndex& source_base_index,
+                                   const ShapeIndex& target_base_index) {
+  CHECK(ShapeUtil::Compatible(
+      ShapeUtil::GetSubshape(shape(), target_base_index),
+      ShapeUtil::GetSubshape(other.shape(), source_base_index)));
+  ForEachMutableElement([this, &other, &source_base_index, &target_base_index](
+                            const ShapeIndex& index, T* data) {
+    // Copy the data element only if index is in the
+    // subtree rooted at target_base_index.
+    for (int i = 0; i < target_base_index.size(); ++i) {
+      if (i >= index.size() || index[i] != target_base_index[i]) {
+        return;
+      }
+    }
+    // Construct source element index to copy from.
+    ShapeIndex source_index = source_base_index;
+    for (int i = target_base_index.size(); i < index.size(); ++i) {
+      source_index.push_back(index[i]);
+    }
+    *data = other.element(source_index);
+  });
+}
+
+template <typename T>
+bool ShapeTree<T>::operator==(const ShapeTree<T>& other) const {
+  bool equal = true;
+  ForEachElement(
+      [this, &other, &equal](const ShapeIndex& index, const T& data) {
+        if (data != other.element(index)) {
+          equal = false;
+        }
+      });
+  return equal;
 }
 
 }  // namespace xla

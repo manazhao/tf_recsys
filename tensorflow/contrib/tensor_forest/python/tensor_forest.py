@@ -19,9 +19,8 @@ from __future__ import print_function
 
 import math
 import random
-import sys
 
-from tensorflow.contrib.losses.python.losses import loss_ops
+from tensorflow.contrib.framework.python.ops import variables as framework_variables
 from tensorflow.contrib.tensor_forest.python import constants
 from tensorflow.contrib.tensor_forest.python.ops import data_ops
 from tensorflow.contrib.tensor_forest.python.ops import tensor_forest_ops
@@ -280,8 +279,16 @@ class ForestTrainingVariables(object):
   def __init__(self, params, device_assigner, training=True,
                tree_variables_class=TreeTrainingVariables):
     self.variables = []
+    # Set up some scalar variables to run through the device assigner, then
+    # we can use those to colocate everything related to a tree.
+    self.device_dummies = []
+    with ops.device(device_assigner):
+      for i in range(params.num_trees):
+        self.device_dummies.append(variable_scope.get_variable(
+            name='device_dummy_%d' % i, shape=0))
+
     for i in range(params.num_trees):
-      with ops.device(device_assigner.get_variable_device(i)):
+      with ops.device(self.device_dummies[i].device):
         self.variables.append(tree_variables_class(params, i, training))
 
   def __setitem__(self, t, val):
@@ -289,30 +296,6 @@ class ForestTrainingVariables(object):
 
   def __getitem__(self, t):
     return self.variables[t]
-
-
-class RandomForestDeviceAssigner(object):
-  """A device assigner that uses the default device.
-
-  Write subclasses that implement get_device for control over how trees
-  get assigned to devices.  This assumes that whole trees are assigned
-  to a device.
-  """
-
-  def __init__(self):
-    self.cached = None
-    self.variables = None
-    self.params = None
-
-  def get_variable_device(self, unused_tree_num):
-    if not self.cached:
-      dummy = constant_op.constant(0)
-      self.cached = dummy.device
-    return self.cached
-
-  def get_device(self, tree_num):
-    # By default, colocate ops with variables.
-    return self.get_variable_device(tree_num)
 
 
 class RandomForestGraphs(object):
@@ -326,8 +309,8 @@ class RandomForestGraphs(object):
                tree_graphs=None,
                training=True):
     self.params = params
-    self.device_assigner = device_assigner or RandomForestDeviceAssigner()
-    self.device_assigner.params = self.params
+    self.device_assigner = (
+        device_assigner or framework_variables.VariableDeviceChooser())
     logging.info('Constructing forest with params = ')
     logging.info(self.params.__dict__)
     self.variables = variables or ForestTrainingVariables(
@@ -338,7 +321,6 @@ class RandomForestGraphs(object):
         tree_graph_class(self.variables[i], self.params, i)
         for i in range(self.params.num_trees)
     ]
-    self.device_assigner.variables = self.variables
 
   def _bag_features(self, tree_num, input_data):
     split_data = array_ops.split(
@@ -382,7 +364,7 @@ class RandomForestGraphs(object):
     tree_end = int((trainer_id + 1) * trees_per_trainer)
     for i in range(tree_start, tree_end):
       logging.info('training graph for tree: %d' % i)
-      with ops.device(self.device_assigner.get_device(i)):
+      with ops.device(self.variables.device_dummies[i].device):
         seed = self.params.base_random_seed
         if seed != 0:
           seed += i
@@ -445,19 +427,19 @@ class RandomForestGraphs(object):
 
     probabilities = []
     for i in range(self.params.num_trees):
-      with ops.device(self.device_assigner.get_device(i)):
+      with ops.device(self.variables.device_dummies[i].device):
         tree_data = processed_dense_features
         if self.params.bagged_features:
           if processed_sparse_features is not None:
             raise NotImplementedError(
                 'Feature bagging not supported with sparse features.')
-          tree_data = self._bag_features(i, input_data)
+          tree_data = self._bag_features(i, tree_data)
         probabilities.append(self.trees[i].inference_graph(
             tree_data,
             data_spec,
             sparse_features=processed_sparse_features,
             **inference_args))
-    with ops.device(self.device_assigner.get_device(0)):
+    with ops.device(self.variables.device_dummies[0].device):
       all_predict = array_ops.stack(probabilities)
       return math_ops.div(
           math_ops.reduce_sum(all_predict, 0), self.params.num_trees,
@@ -471,7 +453,7 @@ class RandomForestGraphs(object):
     """
     sizes = []
     for i in range(self.params.num_trees):
-      with ops.device(self.device_assigner.get_device(i)):
+      with ops.device(self.variables.device_dummies[i].device):
         sizes.append(self.trees[i].size())
     return math_ops.reduce_mean(math_ops.to_float(array_ops.stack(sizes)))
 
@@ -491,16 +473,22 @@ class RandomForestGraphs(object):
     """
     impurities = []
     for i in range(self.params.num_trees):
-      with ops.device(self.device_assigner.get_device(i)):
+      with ops.device(self.variables.device_dummies[i].device):
         impurities.append(self.trees[i].average_impurity())
     return math_ops.reduce_mean(array_ops.stack(impurities))
 
   def get_stats(self, session):
     tree_stats = []
     for i in range(self.params.num_trees):
-      with ops.device(self.device_assigner.get_device(i)):
+      with ops.device(self.variables.device_dummies[i].device):
         tree_stats.append(self.trees[i].get_stats(session))
     return ForestStats(tree_stats, self.params)
+
+  def feature_importances(self):
+    tree_counts = [self.trees[i].feature_usage_counts()
+                   for i in range(self.params.num_trees)]
+    total_counts = math_ops.reduce_sum(array_ops.stack(tree_counts, 0), 0)
+    return total_counts / math_ops.reduce_sum(total_counts)
 
 
 def one_hot_wrapper(num_classes, loss_fn):
@@ -516,49 +504,6 @@ def one_hot_wrapper(num_classes, loss_fn):
         dtype=dtypes.float32)
     return loss_fn(probs, one_hot_labels)
   return _loss
-
-
-class TrainingLossForest(RandomForestGraphs):
-  """Random Forest that uses training loss as the termination criteria."""
-
-  def __init__(self, params, loss_fn=None, **kwargs):
-    """Initialize.
-
-    Args:
-      params: Like RandomForestGraphs, a ForestHParams object.
-      loss_fn: A function that takes probabilities and targets and returns
-        a loss for each example.
-      **kwargs: Keyword args to pass to superclass (RandomForestGraphs).
-    """
-    self.loss_fn = loss_fn or one_hot_wrapper(params.num_classes,
-                                              loss_ops.log_loss)
-    self._loss = None
-    super(TrainingLossForest, self).__init__(params, **kwargs)
-
-  def _get_loss(self, features, labels):
-    """Constructs, caches, and returns the inference-based loss."""
-    if self._loss is not None:
-      return self._loss
-
-    def _average_loss():
-      probs = self.inference_graph(features)
-      return math_ops.reduce_sum(self.loss_fn(
-          probs, labels)) / math_ops.to_float(array_ops.shape(labels)[0])
-
-    self._loss = control_flow_ops.cond(
-        self.average_size() > 0, _average_loss,
-        lambda: constant_op.constant(sys.maxsize, dtype=dtypes.float32))
-
-    return self._loss
-
-  def training_graph(self, input_data, input_labels, **kwargs):
-    loss = self._get_loss(input_data, input_labels)
-    with ops.control_dependencies([loss.op]):
-      return super(TrainingLossForest, self).training_graph(
-          input_data, input_labels, **kwargs)
-
-  def training_loss(self, features, labels, name='training_loss'):
-    return array_ops.identity(self._get_loss(features, labels), name=name)
 
 
 class RandomTreeGraphs(object):
@@ -806,7 +751,8 @@ class RandomTreeGraphs(object):
           regression=self.params.regression)
 
     # Grow tree.
-    with ops.control_dependencies([update_features_op, update_thresholds_op]):
+    with ops.control_dependencies([update_features_op, update_thresholds_op,
+                                   non_fertile_leaves.op]):
       (tree_update_indices, tree_children_updates, tree_threshold_updates,
        new_eot) = (tensor_forest_ops.grow_tree(
            self.variables.end_of_tree, self.variables.node_to_accumulator_map,
@@ -840,9 +786,8 @@ class RandomTreeGraphs(object):
 
     # Ensure end_of_tree doesn't get updated until UpdateFertileSlots has
     # used it to calculate new leaves.
-    gated_new_eot, = control_flow_ops.tuple(
-        [new_eot], control_inputs=[n2a_map_updates])
-    eot_update_op = state_ops.assign(self.variables.end_of_tree, gated_new_eot)
+    with ops.control_dependencies([n2a_map_updates.op]):
+      eot_update_op = state_ops.assign(self.variables.end_of_tree, new_eot)
 
     updates = []
     updates.append(eot_update_op)
@@ -998,3 +943,10 @@ class RandomTreeGraphs(object):
             self.variables.tree, [0, 0], [-1, 1])), constants.LEAF_NODE)
         ).eval(session=session).shape[0]
     return TreeStats(num_nodes, num_leaves)
+
+  def feature_usage_counts(self):
+    features = array_ops.slice(self.variables.tree, [0, 1], [-1, 1])
+    # One hot ignores negative values, which is the default for unused nodes.
+    one_hots = array_ops.one_hot(
+        array_ops.squeeze(features), self.params.num_features)
+    return math_ops.reduce_sum(one_hots, 0)

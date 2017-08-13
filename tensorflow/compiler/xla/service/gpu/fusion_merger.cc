@@ -16,9 +16,10 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/gpu/fusion_merger.h"
 
 #include <algorithm>
+#include <vector>
 
+#include "tensorflow/compiler/xla/service/gpu/instruction_fusion.h"
 #include "tensorflow/compiler/xla/service/hlo_cost_analysis.h"
-#include "tensorflow/compiler/xla/service/instruction_fusion.h"
 #include "tensorflow/compiler/xla/shape_util.h"
 #include "tensorflow/compiler/xla/util.h"
 #include "tensorflow/core/lib/core/errors.h"
@@ -97,9 +98,16 @@ double CalculateFlopsToBytesRatio(HloInstruction* fusion) {
   // Calculate total bytes transferred in/out.
   double bytes = CalculateBytesReadByFusionInstruction(fusion);
   // Add bytes written to root instructions buffer.
-  bytes += ShapeUtil::ByteSizeOf(fusion->fused_expression_root()->shape());
-  // Calculate flops for all fused instructions.
-  HloCostAnalysis analysis;
+  if (fusion->IsMultiOutputFusion()) {
+    for (auto& operand : fusion->fused_expression_root()->operands()) {
+      bytes += ShapeUtil::ByteSizeOf(operand->shape());
+    }
+  } else {
+    bytes += ShapeUtil::ByteSizeOf(fusion->fused_expression_root()->shape());
+  }
+  // Calculate flops for all fused instructions. Use a null shape size function
+  // because we don't care about bytes accessed by the ops.
+  HloCostAnalysis analysis([](const Shape& shape) { return 0; });
   TF_CHECK_OK(fusion->fused_expression_root()->Accept(&analysis));
   // Return flops / bytes.
   return bytes > 0.0 ? analysis.flop_count() / bytes : analysis.flop_count();
@@ -110,8 +118,15 @@ double CalculateFlopsToBytesRatio(HloInstruction* fusion) {
 double GetCurrentBytesTransferred(HloInstruction* fusion) {
   CHECK_EQ(HloOpcode::kFusion, fusion->opcode());
   const double bytes_read = CalculateBytesReadByFusionInstruction(fusion);
-  const double bytes_written =
-      ShapeUtil::ByteSizeOf(fusion->fused_expression_root()->shape());
+  double bytes_written = 0;
+  if (fusion->IsMultiOutputFusion()) {
+    for (auto& operand : fusion->fused_expression_root()->operands()) {
+      bytes_written += ShapeUtil::ByteSizeOf(operand->shape());
+    }
+  } else {
+    bytes_written =
+        ShapeUtil::ByteSizeOf(fusion->fused_expression_root()->shape());
+  }
   // Current bytes transferred (ignoring non 'fusion' user operands) is bytes
   // read and written by 'fusion', plus reads of size 'bytes_written' for each
   // user.
@@ -196,6 +211,12 @@ Status FusionInstructionMerger::HandleFusion(HloInstruction* fusion) {
     ++num_fail_not_loop_fusion_;
     return Status::OK();
   }
+
+  // Skip multiple output fusion. It's not yet supported.
+  if (fusion->IsMultiOutputFusion()) {
+    ++num_fail_not_loop_fusion_;
+    return Status::OK();
+  }
   // Skip 'fusion' instruction if we cannot merge into all of its users.
   // Merging into all users enables the removal of 'fusion' from the
   // computation.
@@ -219,7 +240,7 @@ Status FusionInstructionMerger::HandleFusion(HloInstruction* fusion) {
                    fusion->fused_instructions().end(),
                    [](const std::unique_ptr<HloInstruction>& instruction) {
                      if (instruction->opcode() != HloOpcode::kParameter &&
-                         IsExpensive(*instruction)) {
+                         GpuInstructionFusion::IsExpensive(*instruction)) {
                        return false;
                      }
                      return true;
@@ -248,7 +269,7 @@ Status FusionInstructionMerger::HandleFusion(HloInstruction* fusion) {
     return Status::OK();
   }
   // Merge fused instructions from 'fusion' into each user.
-  std::set<HloInstruction*> users = fusion->users();
+  std::vector<HloInstruction*> users = fusion->users();
   for (HloInstruction* user : users) {
     user->MergeFusionInstruction(fusion);
     changed_ = true;
