@@ -52,7 +52,6 @@ def feature_column_schema_from_config(schema_pbtxt):
       text_format.Parse(f.read(), schema)
       return schema
 
-
 def feature_columns_from_file(schema_pbtxt, include_target):
   """Creates feature columns by loading `FeatureColumnSchema` from config file.
 
