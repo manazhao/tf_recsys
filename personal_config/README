@@ -1,0 +1,14 @@
+# configuration for highest productivity
+Qi Zhao, manazhao@gmail.com
+
+# tmux configuration
+## turn off giberish output after copy
+set-option -s set-clipboard off
+
+# vim autoformatter
+## python
+```shell
+sudo apt-get install python-autopep8
+# or 
+sudo pip install --upgrade autopep8
+```
