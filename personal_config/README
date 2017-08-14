@@ -6,9 +6,14 @@ Qi Zhao, manazhao@gmail.com
 set-option -s set-clipboard off
 
 # vim autoformatter
+## Google formatter.
+https://github.com/google/vim-codefmt
+
 ## python
 ```shell
-sudo apt-get install python-autopep8
-# or 
-sudo pip install --upgrade autopep8
+sudo pip install yapf
+[[ -d ~/.config/yapf ]] || mkdir -p ~/.config/yapf
+cp personal_config/yapf.style ~/.config/yapf/style
 ```
+
+
