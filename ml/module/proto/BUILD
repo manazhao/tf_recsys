@@ -14,7 +14,7 @@ tf_proto_library(
         "feature_column_schema.proto",
     ],
     protodeps = [
-        "//tensorflow/core:all_protos",
+        "//tensorflow/core:protos_all",
     ],
     visibility = ["//ml:__subpackages__"],
 )

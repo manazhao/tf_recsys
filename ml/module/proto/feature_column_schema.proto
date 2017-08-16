@@ -1,4 +1,4 @@
-syntax="proto3";
+syntax = "proto3";
 
 import "tensorflow/core/framework/types.proto";
 
@@ -16,9 +16,7 @@ message Bucket {
   int64 sample_count = 2;
 }
 
-message Histogram {
-  repeated Bucket buckets = 1;
-}
+message Histogram { repeated Bucket buckets = 1; }
 
 message NumericStats {
   float min = 1;
@@ -62,22 +60,23 @@ message SharedEmbeddingColumn {
   CombinerType combiner = 2;
 }
 
-// Derived feature columns sit on basic feature columns.
 message FeatureColumnConfig {
   string name = 1;
-  oneof column {
-    RealValuedColumn real_valued = 2;
-    BucketizedColumn bucketized = 3;
-    OneHotColumn one_hot = 4;
-    EmbeddingColumn embedding = 5;
-    SharedEmbeddingColumn shared_embedding = 6;
+  oneof specific_column {
+    BucketizedColumn bucketized = 2;
+    EmbeddingColumn embedding = 3;
+    HashBucketSparseColumn hash_bucket = 4;
+    IntegerizedSparseColumn integerized = 5;
+    OneHotColumn one_hot = 6;
+    RealValuedColumn real_valued = 7;
+    SharedEmbeddingColumn shared_embedding = 8;
   }
   // Names of the columns this feature column depends on.
-  repeated string dependency = 7;
-  bool include = 8;
+  repeated string dependency = 9;
+  bool include = 10;
 }
 
 message FeatureColumnConfigSchema {
-  string descrption = 1;
-  repeated FeatureColumnConfig columns = 2;
+  string description = 1;
+  repeated FeatureColumnConfig column_config = 2;
 }

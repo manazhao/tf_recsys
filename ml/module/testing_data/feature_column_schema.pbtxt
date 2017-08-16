@@ -1,57 +1,61 @@
-name: "test feature column schema"
-basic_columns: {
-	name: "int_fixed"
-	int_fixed: {
+description: "test feature column schema"
+column_config: {
+	name: "int32"
+	real_valued: {
 		dimension: 10
+    dtype: DT_INT32
 	}
-	retain: true
+	include: true
 }
-basic_columns: {
+column_config: {
 	name: "label"
-	int_fixed: {
+	real_valued: {
 		dimension: 1
+    dtype: DT_INT64
 	}
-	retain: true
+	include: true
 }
-basic_columns: {
-	name: "float_fixed"
-	float_fixed: {
+column_config: {
+	name: "float"
+	real_valued: {
 		dimension: 20
+    dtype: DT_FLOAT
 	}
-	retain: true
+	include: true
 }
 # this feature column will be discarded.
-basic_columns: {
-	name: "float_fixed_discarded"
-	float_fixed: {
+column_config: {
+	name: "real_valued_discarded"
+	real_valued: {
 		dimension: 20
+    dtype: DT_DOUBLE
 	}
-	retain: false
+	include: false
 }
-basic_columns: {
-	name: "integerized_sparse"
-	integerized_sparse: {
+column_config: {
+	name: "integerized"
+	integerized: {
 		bucket_size: 10
 		combiner: COMBINER_TYPE_SUM
-		data_type: DATA_TYPE_INT32
+		dtype: DT_INT32
 	}
-	retain: true
+	include: true
 }
-basic_columns: {
-	name: "hash_bucket_sparse"
-	hash_bucket_sparse: {
+column_config: {
+	name: "hash_bucket"
+	hash_bucket: {
 		hash_bucket_size: 5000
 		combiner: COMBINER_TYPE_MEAN
-		data_type: DATA_TYPE_INT64
+		dtype: DT_INT64
 	}
-	retain: true
+	include: true
 }
-derived_columns: {
+column_config: {
 	name: "embedding"
 	embedding: {
 		dimension: 50
 		combiner: COMBINER_TYPE_SQRT
 	}
-	depending_columns: "hash_bucket_sparse"
-	retain: true
+	dependency: "hash_bucket"
+	include: true
 }

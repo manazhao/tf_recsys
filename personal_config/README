@@ -9,6 +9,11 @@ set-option -s set-clipboard off
 ## Google formatter.
 https://github.com/google/vim-codefmt
 
+## clang-format
+```shell
+sudo apt-get install clang-format
+```
+
 ## python
 ```shell
 sudo pip install yapf
