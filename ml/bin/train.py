@@ -29,8 +29,9 @@ tf.flags.DEFINE_string("estimator_config_file", None,
 tf.flags.DEFINE_string("feature_column_schema_file", None,
                        "`FeatureColumnConfigSchema` pbtxt file")
 # Training data.
-tf.flags.DEFINE_string("training_data", "File patterns for training data.")
-tf.flags.DEFINE_string("testing_data", "File patterns for testing data.")
+tf.flags.DEFINE_string("training_data", None,
+                       "File patterns for training data.")
+tf.flags.DEFINE_string("testing_data", None, "File patterns for testing data.")
 
 # Training parameters
 tf.flags.DEFINE_string("schedule", "continuous_train_and_eval",
@@ -118,24 +119,15 @@ def _get_input_fn(mode, batch_size):
   return _input_fn
 
 
-def _create_experiment(run_config):
+def _create_experiment(run_config, hparams):
   """
   Creates a new Experiment instance.
 
   Args:
-    run_config: (RunConfig) configuration for the experiment.
-    hparams: (HParams) estimator hyperparameters.
+    run_config: (`tf.RunConfig`) configuration for the experiment.
+    hparams: (`tf.HParams`) model hyperparameters.
   """
-  run_config = run_config.RunConfig(
-      tf_random_seed=FLAGS.tf_random_seed,
-      save_checkpoints_secs=FLAGS.save_checkpoints_secs,
-      save_checkpoints_steps=FLAGS.save_checkpoints_steps,
-      keep_checkpoint_max=FLAGS.keep_checkpoint_max,
-      keep_checkpoint_every_n_hours=FLAGS.keep_checkpoint_every_n_hours,
-      gpu_memory_fraction=FLAGS.gpu_memory_fraction)
-  run_config.tf_config.gpu_options.allow_growth = FLAGS.gpu_allow_growth
-  run_config.tf_config.log_device_placement = FLAGS.log_device_placement
-
+  _ = hparams
   feature_column_strategy = fcf.FeatureColumnStrategy(
       FLAGS.feature_column_schema_file)
   feature_columns_dict = feature_column_strategy.get_feature_columns(
@@ -158,8 +150,7 @@ def _create_experiment(run_config):
       min_eval_frequency=FLAGS.eval_every_n_steps,
       train_steps=FLAGS.train_steps,
       eval_steps=FLAGS.eval_steps,
-      export_strategies=[export_strategy],
-      eval_steps=None)
+      export_strategies=[export_strategy])
 
   return experiment
 
@@ -167,7 +158,9 @@ def _create_experiment(run_config):
 def main(_argv):
   if not FLAGS.output_dir:
     FLAGS.output_dir = tempfile.mkdtemp()
-  learn_runner.run(experiment_fn=_create_experiment)
+  run_config = tf.contrib.learn.RunConfig(model_dir=FLAGS.output_dir)
+  learn_runner.run(
+      experiment_fn=_create_experiment, run_config=run_config, hparams=None)
 
 
 if __name__ == "__main__":
