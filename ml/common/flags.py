@@ -10,3 +10,5 @@ if not hasattr(FLAGS, 'test_srcdir'):
   FLAGS.test_srcdir = ''
 if not hasattr(FLAGS, 'test_tmpdir'):
   FLAGS.test_tmpdir = tf.test.get_temp_dir()
+
+tf.logging.set_verbosity(tf.logging.INFO)

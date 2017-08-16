@@ -8,8 +8,8 @@ import os
 import tensorflow as tf
 
 import ml.common.flags as my_flags
-import ml.module.proto.estimator_config_pb2 as est_pb2
 import ml.module.estimator_factory as est_factory
+import ml.module.proto.estimator_config_pb2 as est_pb2
 
 FLAGS = my_flags.FLAGS
 
@@ -23,14 +23,19 @@ class EstimatorFactoryTest(tf.test.TestCase):
         self.config_file)
 
     self.run_config = tf.contrib.learn.RunConfig()
-    self.feature_columns = set(
-        {tf.contrib.layers.real_valued_column(column_name="x", dimension=1, dtype=tf.float32)})
+    self.feature_columns = set({
+        tf.contrib.layers.real_valued_column(
+            column_name="x", dimension=1, dtype=tf.float32)
+    })
 
   def test_create_estimator(self):
     with tf.Graph().as_default(), tf.Session():
       dnn_classifier = est_factory.create_estimator(
-          run_config=self.run_config, estimator_config=self.estimator_config, feature_columns=self.feature_columns)
+          run_config=self.run_config,
+          estimator_config=self.estimator_config,
+          feature_columns=self.feature_columns)
       self.assertIsNotNone(dnn_classifier)
+
 
 if __name__ == "__main__":
   tf.logging.set_verbosity(tf.logging.INFO)

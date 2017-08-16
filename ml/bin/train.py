@@ -1,5 +1,4 @@
 #! /usr/bin/env python
-
 """Main script to run training and evaluation of models.
 """
 
@@ -16,11 +15,22 @@ from tensorflow.contrib.learn.python.learn import learn_runner
 from tensorflow.contrib.learn.python.learn.estimators import run_config
 from tensorflow import gfile
 
+import ml.module.estimator_factory as ef
+import ml.module.feature_column_factory as fcf
+
 tf.flags.DEFINE_integer("batch_size", 16,
                         """Batch size used for training and evaluation.""")
 tf.flags.DEFINE_string("output_dir", None,
                        """The directory to write model checkpoints and summaries
                        to. If None, a local temporary directory is created.""")
+
+tf.flags.DEFINE_string("estimator_config_file", None,
+                       "Estimator configuration pbtxt file")
+tf.flags.DEFINE_string("feature_column_schema_file", None,
+                       "`FeatureColumnConfigSchema` pbtxt file")
+# Training data.
+tf.flags.DEFINE_string("training_data", "File patterns for training data.")
+tf.flags.DEFINE_string("testing_data", "File patterns for testing data.")
 
 # Training parameters
 tf.flags.DEFINE_string("schedule", "continuous_train_and_eval",
@@ -29,6 +39,8 @@ tf.flags.DEFINE_string("schedule", "continuous_train_and_eval",
 tf.flags.DEFINE_integer("train_steps", None,
                         """Maximum number of training steps to run.
                          If None, train forever.""")
+tf.flags.DEFINE_integer("eval_steps", None,
+                        "Number of evaluation steps per checkpoint.")
 tf.flags.DEFINE_integer("eval_every_n_steps", 1000,
                         "Run evaluation on validation data every N steps.")
 
@@ -59,19 +71,54 @@ tf.flags.DEFINE_boolean("gpu_allow_growth", False,
 tf.flags.DEFINE_boolean("log_device_placement", False,
                         """Log the op placement to devices""")
 
-
 FLAGS = tf.flags.FLAGS
 
-def _get_estimator(run_config, hparams, estimator_config):
+
+def _get_estimator(run_config, feature_columns):
   """Creates an `Estimator`.
 
   Args:
     config: (`RunConfig`) Configuration for learn runner.
-    hparams: (`HParams`) Model hyperparameter specification.
-    estimator
-  """
+    feature_columns: a set of `tf._FeatureColumn`s.
 
-def create_experiment(run_config, hparams):
+  Returns:
+    a `tf.Estimator` object.
+  """
+  estimator_config = ef.estimator_config_file(FLAGS.estimator_config_file)
+  estimator = ef.create_estimator(run_config, estimator_config, feature_columns)
+
+
+def _get_feature_columns(include_target):
+  feature_column_strategy = fcf.FeatureColumnStrategy(
+      FLAGS.feature_column_schema_file)
+  feature_columns_dict = feature_column_strategy.get_feature_columns(
+      include_target=include_target)
+  return feature_columns_dict.values()
+
+
+def _get_input_fn(mode, batch_size):
+
+  def _input_fn():
+    include_target = (mode != tf.contrib.learn.ModeKeys.INFER)
+    file_patterns = FLAGS.training_data.split(",")
+    randomize_input = True if mode == tf.contrib.learn.ModeKeys.TRAIN else False
+    feature_spec = (tf.contrib.layers.create_feature_spec_for_parsing(
+        feature_columns=_get_feature_columns(include_target)))
+    feature_map = tf.contrib.learn.io.read_batch_features(
+        file_pattern=file_patterns,
+        batch_size=batch_size,
+        reader_num_threads=1,
+        features=feature_spec,
+        randomize_input=randomize_input)
+    target = None
+    if mode != tf.contrib.learn.ModeKeys.INFER:
+      target = feature_map.pop(fcf.FEATURE_LABEL_NAME)
+    return feature_map, target
+
+  return _input_fn
+
+
+def _create_experiment(run_config):
   """
   Creates a new Experiment instance.
 
@@ -79,106 +126,48 @@ def create_experiment(run_config, hparams):
     run_config: (RunConfig) configuration for the experiment.
     hparams: (HParams) estimator hyperparameters.
   """
-
-  config = run_config.RunConfig(
+  run_config = run_config.RunConfig(
       tf_random_seed=FLAGS.tf_random_seed,
       save_checkpoints_secs=FLAGS.save_checkpoints_secs,
       save_checkpoints_steps=FLAGS.save_checkpoints_steps,
       keep_checkpoint_max=FLAGS.keep_checkpoint_max,
       keep_checkpoint_every_n_hours=FLAGS.keep_checkpoint_every_n_hours,
       gpu_memory_fraction=FLAGS.gpu_memory_fraction)
-  config.tf_config.gpu_options.allow_growth = FLAGS.gpu_allow_growth
-  config.tf_config.log_device_placement = FLAGS.log_device_placement
+  run_config.tf_config.gpu_options.allow_growth = FLAGS.gpu_allow_growth
+  run_config.tf_config.log_device_placement = FLAGS.log_device_placement
 
+  feature_column_strategy = fcf.FeatureColumnStrategy(
+      FLAGS.feature_column_schema_file)
+  feature_columns_dict = feature_column_strategy.get_feature_columns(
+      include_target=True)
+  estimator = _get_estimator(run_config, feature_columns_dict.values())
 
-  estimator = tf.contrib.learn.Estimator(
-      model_fn=model_fn,
-      model_dir=output_dir,
-      config=config,
-      params=FLAGS.model_params)
+  train_input_fn = _get_input_fn(tf.contrib.learn.ModeKeys.TRAIN,
+                                 FLAGS.batch_size)
+  eval_input_fn = _get_input_fn(tf.contrib.learn.ModeKeys.EVAL,
+                                FLAGS.batch_size)
+  serving_input_fn = tf.contrib.layers.build_parsing_serving_input_fn(
+      feature_spec)
+  export_strategy = tf.contrib.learn.make_export_strategy(
+      serving_input_fn, exports_to_keep=None)
 
-  # Create hooks
-  train_hooks = []
-  for dict_ in FLAGS.hooks:
-    hook = _create_from_dict(
-        dict_, hooks,
-        model_dir=estimator.model_dir,
-        run_config=config)
-    train_hooks.append(hook)
-
-  # Create metrics
-  eval_metrics = {}
-  for dict_ in FLAGS.metrics:
-    metric = _create_from_dict(dict_, metric_specs)
-    eval_metrics[metric.name] = metric
-
-  experiment = PatchedExperiment(
+  experiment = tf.contrib.learn.Experiment(
       estimator=estimator,
       train_input_fn=train_input_fn,
       eval_input_fn=eval_input_fn,
       min_eval_frequency=FLAGS.eval_every_n_steps,
       train_steps=FLAGS.train_steps,
-      eval_steps=None,
-      eval_metrics=eval_metrics,
-      train_monitors=train_hooks)
+      eval_steps=FLAGS.eval_steps,
+      export_strategies=[export_strategy],
+      eval_steps=None)
 
   return experiment
 
 
 def main(_argv):
-  """The entrypoint for the script"""
-
-  # Parse YAML FLAGS
-  FLAGS.hooks = _maybe_load_yaml(FLAGS.hooks)
-  FLAGS.metrics = _maybe_load_yaml(FLAGS.metrics)
-  FLAGS.model_params = _maybe_load_yaml(FLAGS.model_params)
-  FLAGS.input_pipeline_train = _maybe_load_yaml(FLAGS.input_pipeline_train)
-  FLAGS.input_pipeline_dev = _maybe_load_yaml(FLAGS.input_pipeline_dev)
-
-  # Load flags from config file
-  final_config = {}
-  if FLAGS.config_paths:
-    for config_path in FLAGS.config_paths.split(","):
-      config_path = config_path.strip()
-      if not config_path:
-        continue
-      config_path = os.path.abspath(config_path)
-      tf.logging.info("Loading config from %s", config_path)
-      with gfile.GFile(config_path.strip()) as config_file:
-        config_flags = yaml.load(config_file)
-        final_config = _deep_merge_dict(final_config, config_flags)
-
-  tf.logging.info("Final Config:\n%s", yaml.dump(final_config))
-
-  # Merge flags with config values
-  for flag_key, flag_value in final_config.items():
-    if hasattr(FLAGS, flag_key) and isinstance(getattr(FLAGS, flag_key), dict):
-      merged_value = _deep_merge_dict(flag_value, getattr(FLAGS, flag_key))
-      setattr(FLAGS, flag_key, merged_value)
-    elif hasattr(FLAGS, flag_key):
-      setattr(FLAGS, flag_key, flag_value)
-    else:
-      tf.logging.warning("Ignoring config flag: %s", flag_key)
-
-  if FLAGS.save_checkpoints_secs is None \
-    and FLAGS.save_checkpoints_steps is None:
-    FLAGS.save_checkpoints_secs = 600
-    tf.logging.info("Setting save_checkpoints_secs to %d",
-                    FLAGS.save_checkpoints_secs)
-
   if not FLAGS.output_dir:
     FLAGS.output_dir = tempfile.mkdtemp()
-
-  if not FLAGS.input_pipeline_train:
-    raise ValueError("You must specify input_pipeline_train")
-
-  if not FLAGS.input_pipeline_dev:
-    raise ValueError("You must specify input_pipeline_dev")
-
-  learn_runner.run(
-      experiment_fn=create_experiment,
-      output_dir=FLAGS.output_dir,
-      schedule=FLAGS.schedule)
+  learn_runner.run(experiment_fn=_create_experiment)
 
 
 if __name__ == "__main__":
